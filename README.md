@@ -1,4 +1,4 @@
-# It's work in progress
+# This is a work in progress
  
  This is a very early stage of development. For now implementing UX, no encoding functionality is implemented yet.
 
