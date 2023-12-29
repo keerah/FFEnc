@@ -1,5 +1,6 @@
-import sys, os, subprocess, re, json
+import sys, os, subprocess, re, json, string
 import datetime as dt
+from enum import Enum
 from pathlib import Path
 import wx
 import wx.propgrid as wxpg
@@ -15,8 +16,10 @@ class FileDropTarget(wx.FileDropTarget):
         app.frame.flog(0, f'Adding {len(filepaths)} files...')
         for filepath in filepaths:
             if source_files.get(filepath, None) is None:
-                source_files[filepath] = Media_File(filepath, len(source_files))
-                self.listbox.Append([source_files[filepath].index+1, filepath, 'Not set', 'Not set'])  # Add each filename to the listbox
+                media = Media_File(filepath, len(source_files))
+                if media.format is not None:
+                    source_files[filepath] = media
+                    self.listbox.Append([media.index+1, filepath, media.type.doc, 'Not set', 'Not set'])  
             else:
                 app.frame.flog(0, f'File "{filepath}" is already in the list. Skipped.')
         return True
@@ -136,7 +139,8 @@ class MyMainFrame(wx.Frame):
 
         self.list_files = wx.ListCtrl(self.panel_main, wx.ID_ANY, style=wx.BORDER_NONE | wx.LC_HRULES | wx.LC_REPORT) # | wx.LC_SINGLE_SEL
         self.list_files.AppendColumn("#", format=wx.LIST_FORMAT_LEFT, width=25)
-        self.list_files.AppendColumn("File", format=wx.LIST_FORMAT_LEFT, width=350)
+        self.list_files.AppendColumn("File", format=wx.LIST_FORMAT_LEFT, width=320)
+        self.list_files.AppendColumn("Type", format=wx.LIST_FORMAT_LEFT, width=80)
         self.list_files.AppendColumn("Video preset", format=wx.LIST_FORMAT_LEFT, width=80)
         self.list_files.AppendColumn("Audio preset", format=wx.LIST_FORMAT_LEFT, width=80)
         sizer_files.Add(self.list_files, 3, wx.EXPAND | wx.LEFT | wx.TOP, 5)
@@ -217,9 +221,9 @@ class MyMainFrame(wx.Frame):
         self.list_files.Bind(wx.EVT_LIST_ITEM_SELECTED, self.file_selected)
         self.list_files.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.file_activated) # delete
         self.list_video_preset.Bind(wx.EVT_LISTBOX, self.video_preset_selected)
-        self.list_video_preset.Bind(wx.EVT_LISTBOX_DCLICK, self.video_preset_activated)
+        self.list_video_preset.Bind(wx.EVT_LISTBOX_DCLICK, self.video_preset_activated) # assign video preset
         self.list_audio_preset.Bind(wx.EVT_LISTBOX, self.audio_preset_selected)
-        self.list_audio_preset.Bind(wx.EVT_LISTBOX_DCLICK, self.audio_preset_activated)
+        self.list_audio_preset.Bind(wx.EVT_LISTBOX_DCLICK, self.audio_preset_activated) # assign audio preset
         self.button_save_video_preset.Bind(wx.EVT_BUTTON, self.save_video_preset)
         self.button_dup_video_preset.Bind(wx.EVT_BUTTON, self.dup_video_preset)
         self.button_del_video_preset.Bind(wx.EVT_BUTTON, self.del_video_preset)
@@ -245,7 +249,7 @@ class MyMainFrame(wx.Frame):
         info_root_id = self.tree_file_info.AddRoot(media.filename)
         for stream in media.streams:
             info_stream_id = self.tree_file_info.AppendItem(info_root_id, f'Stream #{stream['index']}: {stream.get('codec_type', 'unidentified')}')
-            for category, props in media.stream_properies.items():
+            for category, props in ffmpeg.stream_properies.items():
                 info_category = self.tree_file_info.AppendItem(info_stream_id, category)
                 cnt = 0
                 for propkey, propname in props.items():
@@ -256,7 +260,7 @@ class MyMainFrame(wx.Frame):
                 if cnt == 0: self.tree_file_info.Delete(info_category)
         
         info_container_id = self.tree_file_info.AppendItem(info_root_id, 'Container')
-        for propkey, propname in media.format_properties['Format'].items():
+        for propkey, propname in ffmpeg.format_properties['Format'].items():
             val = media.format.get(propkey, None)
             if val is not None:
                 self.tree_file_info.AppendItem(info_container_id, f'{propname}: {self.value_formatter(propkey, val)}')
@@ -277,12 +281,12 @@ class MyMainFrame(wx.Frame):
     def video_preset_activated(self, event):
         count = self.list_files.GetSelectedItemCount()
         if count != 0:
+            preset_item = self.list_video_preset.GetSelection()
+            preset_name = self.list_video_preset.GetString(preset_item)
             file_item = self.list_files.GetFirstSelected()
             for i in range(count):
-                #file_itemname = self.list_files.GetItemText(file_item, 1)
-                item = self.list_video_preset.GetSelection()
-                itemname = self.list_video_preset.GetString(item)
-                self.list_files.SetItem(file_item, 2, itemname)
+                self.list_files.SetItem(file_item, 3, preset_name)
+                source_files[self.list_files.GetItemText(file_item, 1)].video_preset = preset_name
                 file_item = self.list_files.GetNextSelected(file_item)
         else:
             self.flog(0, 'Select a file to apply preset')
@@ -295,12 +299,12 @@ class MyMainFrame(wx.Frame):
     def audio_preset_activated(self, event):
         count = self.list_files.GetSelectedItemCount()
         if count != 0:
+            preset_item = self.list_audio_preset.GetSelection()
+            preset_name = self.list_audio_preset.GetString(preset_item)
             file_item = self.list_files.GetFirstSelected()
             for i in range(count):
-                #file_itemname = self.list_files.GetItemText(file_item, 1)
-                item = self.list_audio_preset.GetSelection()
-                itemname = self.list_audio_preset.GetString(item)
-                self.list_files.SetItem(file_item, 3, itemname)
+                self.list_files.SetItem(file_item, 4, preset_name)
+                source_files[self.list_files.GetItemText(file_item, 1)].audio_preset = preset_name
                 file_item = self.list_files.GetNextSelected(file_item)
         else:
             self.flog(0, 'Select a file to apply preset')
@@ -369,7 +373,7 @@ class MyMainFrame(wx.Frame):
 
         self.log_tabs[id]['text'] = wx.TextCtrl(self.log_tabs[id]['panel'], wx.ID_ANY, '', style=wx.BORDER_NONE | wx.HSCROLL | wx.TE_AUTO_URL | wx.TE_BESTWRAP | wx.TE_MULTILINE | wx.TE_NOHIDESEL | wx.TE_READONLY | wx.TE_RICH2)
         self.log_tabs[id]['text'].SetBackgroundColour(wx.Colour(208, 208, 208))
-        self.log_tabs[id]['sizer'].Add(self.log_tabs[id]['text'], 1, wx.EXPAND, 0)
+        self.log_tabs[id]['sizer'].Add(self.log_tabs[id]['text'], 1, wx.ALL | wx.EXPAND, 3)
 
         self.log_tabs[id]['panel'].SetSizer(self.log_tabs[id]['sizer'])
         self.log_tabs[id]['panel'].Layout()
@@ -443,7 +447,6 @@ class MyApp(wx.App):
         self.frame.Show()
         return True
 
-
 class FFmpeg():
     formats_video = ['mp4','mov','webm','dnxhd','mxf','avi','mpeg','dv','flv','apng','exr','gif','jpg','png','tif','dds']
     codecs_video =  ['prores','libx264','libx265', 'h264_nvenc','hevc_nvenc','h264_qsv','hevc_qsv','libvpx-vp9','vp9_qsv','mpeg2video','mpeg2_qsv','libx265dnxhd','mpegts','dvvideo','flv1','gif','apng','png','mjpeg','tiff','dds','HDR','WebP']
@@ -451,45 +454,7 @@ class FFmpeg():
     color_ranges =  ['tv', 'pc', 'mpeg', 'jpeg']
     formats_audio = ['Video container','ac3','wav','mp3','ogg','flac','aiff','alac']
     codecs_audio =  ['aac','ac3','flac','alac','dvaudio','pcm_s16le','pcm_s24le','pcm_s32le','pcm_f32le']
-    #ffmpegexe = ''
-    def __init__(self, path: str):
-        self.path = path
-        self.ffmpegexe = self.path + 'ffmpeg.exe'
-        self.ffprobeexe = self.path + 'ffprobe.exe'
-        my_file = Path(self.ffmpegexe)
-        if my_file.is_file():
-            app.frame.flog(0, f'FFmpeg executable found at {self.ffmpegexe}')
-        else:
-            app.frame.flog(0, f'FFmpeg executable not found at {self.ffmpegexe}')
-        my_file = Path(self.ffprobeexe)
-        if my_file.is_file():
-            app.frame.flog(0, f'FFprobe executable found at {self.ffprobeexe}')
-        else:
-            app.frame.flog(0, f'FFprobe executable not found at {self.ffprobeexe}')
-
-
-class Encoder():
-    
-    class Option():
-        def __init__(self, *args, **kwargs):
-            self.name = kwargs.keys()[0]
-            self.preset = kwargs.get('option')
-            self.preset.values = kwargs.get('values')
-            
-
-    def __init__(self, *args, **kwargs):
-        self.name = kwargs.get('Name')
-        self.general = kwargs.get('General')
-        self.threading = kwargs.get('Threading')
-        self.colorcoding = kwargs.get('Color coding')
-        options = kwargs.get('Options', None)
-
-
-class Filter():
-    pass
-
-
-class Media_File():
+    sequence_tags = ['image2', 'pipe']
 
     # media properties interpreter, only these get displayed in info box
     stream_properies = {
@@ -539,7 +504,8 @@ class Media_File():
 
     format_properties = {
         'Format': {
-            'format_long_name': 'Format name',
+            'format_name': 'Format name',
+            'format_long_name': 'Format long name',
             'nb_streams': 'Nubmer of streams',
             'start_time': 'Start',
             'duration': 'Duration',
@@ -551,12 +517,64 @@ class Media_File():
         }
 
     }
+  
+    def __init__(self, path: str):
+        self.path = path
+        self.ffmpegexe = self.path + 'ffmpeg.exe'
+        self.ffprobeexe = self.path + 'ffprobe.exe'
+        my_file = Path(self.ffmpegexe)
+        if my_file.is_file():
+            app.frame.flog(0, f'FFmpeg executable found at {self.ffmpegexe}')
+        else:
+            app.frame.flog(0, f'FFmpeg executable not found at {self.ffmpegexe}')
+        my_file = Path(self.ffprobeexe)
+        if my_file.is_file():
+            app.frame.flog(0, f'FFprobe executable found at {self.ffprobeexe}')
+        else:
+            app.frame.flog(0, f'FFprobe executable not found at {self.ffprobeexe}')
 
+class Encoder():
+    
+    class Option():
+        def __init__(self, *args, **kwargs):
+            self.name = kwargs.keys()[0]
+            self.preset = kwargs.get('option')
+            self.preset.values = kwargs.get('values')
+            
+
+    def __init__(self, *args, **kwargs):
+        self.name = kwargs.get('Name')
+        self.general = kwargs.get('General')
+        self.threading = kwargs.get('Threading')
+        self.colorcoding = kwargs.get('Color coding')
+        options = kwargs.get('Options', None)
+
+class Filter():
+    pass
+
+class Video_Preset():
+    def __init__(self):
+        self.editable = True
+
+class Audio_Preset():
+    def __init__(self):
+        self.editable = True
+
+class Media_Type(Enum):
+    video =    0, 'Video'
+    sequence = 1, 'Image/sequence'
+    audio =    2, 'Audio'
+    data =     3, 'Data'
+
+    def __init__(self, id: int, doc: str):
+        self.id = id
+        self.doc = doc
+
+class Media_File():
     def __init__(self, filepath: str, index: int):
         self.index = index
         self.filepath = filepath
         self.filename = os.path.basename(filepath)
-        # sequence detection !TODO!
         self.isSequence = False
         app.frame.flog(0, f'Probing file "{self.filename}"')
         try:
@@ -586,14 +604,32 @@ class Media_File():
                 for itemkey, itemval in self.format['tags'].items():
                     self.format['TAG:'+itemkey.upper()] = itemval
                 del self.format['tags']
+
+            # type detection
+            fn = self.format.get('format_name')
+            if has_tags(fn, ffmpeg.sequence_tags):
+                self.type = Media_Type.sequence
+                # now detect sequence frames here !TODO!
+            elif has_tags(fn, ffmpeg.formats_audio):
+                self.type = Media_Type.audio
+            elif has_tags(fn, ffmpeg.formats_video):
+                self.type = Media_Type.video
+            else:
+                self.type = Media_Type.data
+
+            self.video_preset = None
+            self.audio_preset = None
+
             app.frame.log_add(self.filename)
             app.frame.flog(0, f'File "{self.filename}" added.')
             app.frame.flog(self.index+1, f'File "{self.filename}" added.')
+
 
     def delete(self):
         app.frame.tree_file_info.DeleteAllItems()
         app.frame.list_files.DeleteItem(source_files[self.filepath].index)
         app.frame.log_pop(source_files[self.filepath].index+1)
+        del source_files[self.filepath]
         app.frame.flog(0, f'File "{self.filename}" deleted.')        
 
 
@@ -604,6 +640,9 @@ def notify(text: str):
     wxadv.NotificationMessage.SetTitle(notif, MyApp.ver)
     wxadv.NotificationMessage.SetIcon(notif, feicon)
     wxadv.NotificationMessage.Show(notif, timeout=8)    
+
+def has_tags(text: str, tag_list: list) -> bool:
+    return any(item in text for item in tag_list)
 
 
 if __name__ == "__main__":
