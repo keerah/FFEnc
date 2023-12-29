@@ -1,6 +1,23 @@
+# It's work in progress
+ 
+ This is a very early stage of development. For now implementing UX, no encoding functionality is implemented yet.
+
 # FFEnc
  FFmpeg based encoder for high quality, bulk and repetitive video/sequence/audio transcoding
  
  This will wrap my [SendTo_FFmpeg](https://github.com/keerah/SendTo_FFmpeg) tools experience into a simple but versatile GUI tool.
+
+# The concept
+
+ Minimal dependencies
+
+ High usability for bulk and repetetive tasks
  
- This is a very early stage of development. For now implementing UX, no real functionality.
+ Maximum functionality while keeping the UX clean and logical
+
+ Robust execution and encoding settings application/editing
+
+ Usage flexibility both using GUI and command line
+
+ High quality encoding
+
