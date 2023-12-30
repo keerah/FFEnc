@@ -1,7 +1,7 @@
-import sys, os, subprocess, re, json, string
+import sys, os, subprocess, re, json
 import datetime as dt
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePath
 import wx
 import wx.propgrid as wxpg
 import wx.adv as wxadv
@@ -15,13 +15,7 @@ class FileDropTarget(wx.FileDropTarget):
     def OnDropFiles(self, x, y, filepaths):
         app.frame.flog(0, f'Adding {len(filepaths)} files...')
         for filepath in filepaths:
-            if source_files.get(filepath, None) is None:
-                media = Media_File(filepath, len(source_files))
-                if media.format is not None:
-                    source_files[filepath] = media
-                    self.listbox.Append([media.index+1, filepath, media.type.doc, 'Not set', 'Not set'])  
-            else:
-                app.frame.flog(0, f'File "{filepath}" is already in the list. Skipped.')
+            Media_File(filepath)
         return True
 
 class MyMainFrame(wx.Frame):
@@ -243,7 +237,6 @@ class MyMainFrame(wx.Frame):
     def file_selected(self, event):
         item = self.list_files.GetFirstSelected()
         itemname = self.list_files.GetItemText(item, 1)
-        #print(f'Selected file {itemname}')
         self.tree_file_info.DeleteAllItems()
         media: Media_File = source_files[itemname]
         info_root_id = self.tree_file_info.AddRoot(media.filename)
@@ -562,30 +555,56 @@ class Audio_Preset():
 
 class Media_Type(Enum):
     video =    0, 'Video'
-    sequence = 1, 'Image/sequence'
-    audio =    2, 'Audio'
-    data =     3, 'Data'
+    image =    1, 'Image(s)'
+    sequence = 2, 'Sequence'
+    audio =    3, 'Audio'
+    data =     4, 'Data'
 
     def __init__(self, id: int, doc: str):
         self.id = id
         self.doc = doc
 
 class Media_File():
-    def __init__(self, filepath: str, index: int):
-        self.index = index
+    def __init__(self, filepath: str):
+        self.index = len(source_files)
+        self.origpath = filepath
         self.filepath = filepath
         self.filename = os.path.basename(filepath)
-        self.isSequence = False
-        app.frame.flog(0, f'Probing file "{self.filename}"')
-        try:
-            probe = subprocess.check_output(
-                [ffmpeg.ffprobeexe,
+        self.extension = PurePath(self.filepath).suffix
+        self.basename = PurePath(self.filepath).stem
+        self.out_basename = self.basename
+        self.out_framerate = 30
+        self.video_preset = None
+        self.audio_preset = None
+        
+        self.probe()
+        self.detect_type()
+
+        if self.filepath in source_files:
+            app.frame.flog(0, f'File {self.filepath} was already added to the sources. Skipped.')
+        else:
+            source_files[self.filepath] = self
+            app.frame.list_files.Append([self.index+1, self.filepath, self.type.doc, 'Not set', 'Not set']) 
+            app.frame.log_add(self.filename)
+            app.frame.flog(0, f'File "{self.filename}" added.')
+            app.frame.flog(self.index+1, f'File "{self.filename}" added.')
+
+    def probe(self, sequence_param: list = None):
+        probe_param = [
+                ffmpeg.ffprobeexe,
                 '-v', 'error',
                 '-hide_banner',
                 '-show_streams', '-show_format',
                 '-sexagesimal',
                 '-of', 'json',
-                filepath], encoding='utf-8')
+                self.filepath]
+        if sequence_param is not None: 
+            app.frame.flog(0, f'Re-probing file "{self.filename}" as sequence.')
+            probe_param[9:9] = sequence_param
+        else:
+            app.frame.flog(0, f'Probing file "{self.filename}".')
+        try:
+            probe = subprocess.check_output(probe_param, encoding='utf-8')
         except:
             app.frame.flog(0, f'Unable to add file "{self.filename}". Check if it\'s a media file. Skipped.')
             self.streams = None
@@ -605,25 +624,29 @@ class Media_File():
                     self.format['TAG:'+itemkey.upper()] = itemval
                 del self.format['tags']
 
-            # type detection
-            fn = self.format.get('format_name')
-            if has_tags(fn, ffmpeg.sequence_tags):
+    def detect_type(self):
+        # type detection from the probe
+        fn = self.format.get('format_name')
+        if has_tags(fn, ffmpeg.sequence_tags):
+            self.type = Media_Type.image
+            # detect frame counter
+            rs = re.compile(r'\d{3,6}$')
+            counter_match = rs.search(self.basename)
+            if counter_match is not None:
                 self.type = Media_Type.sequence
-                # now detect sequence frames here !TODO!
-            elif has_tags(fn, ffmpeg.formats_audio):
-                self.type = Media_Type.audio
-            elif has_tags(fn, ffmpeg.formats_video):
-                self.type = Media_Type.video
-            else:
-                self.type = Media_Type.data
-
-            self.video_preset = None
-            self.audio_preset = None
-
-            app.frame.log_add(self.filename)
-            app.frame.flog(0, f'File "{self.filename}" added.')
-            app.frame.flog(self.index+1, f'File "{self.filename}" added.')
-
+                self.counter_length: str = len(counter_match.group())
+                self.filepath = self.filepath.replace(self.filename, '') # cut off filename
+                self.basename = self.basename.replace(counter_match.group(), f'%0{self.counter_length}d')
+                self.filename = self.basename + self.extension
+                self.filepath += self.filename # add the updated filename back
+                # re-probe as sequence now
+                self.probe(['-pattern_type', 'sequence', '-framerate', str(self.format.get('r_frame_rate', self.out_framerate)), '-start_number', '0'])
+        elif has_tags(fn, ffmpeg.formats_audio):
+            self.type = Media_Type.audio
+        elif has_tags(fn, ffmpeg.formats_video):
+            self.type = Media_Type.video
+        else:
+            self.type = Media_Type.data
 
     def delete(self):
         app.frame.tree_file_info.DeleteAllItems()
@@ -690,5 +713,5 @@ if __name__ == "__main__":
             }
         })
     encoders['libx264'] = enc_libx264
-    source_files = {} # {'filename': media_file}
+    source_files = {} 
     app.MainLoop()
