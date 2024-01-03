@@ -21,4 +21,4 @@
 
  High quality encoding
 
- Minimal constrains, allowing a user to built whatever they want, and troubleshoot ffmpeg problems and incompatibilities using logs (a live log for each file)
+ Minimal constrains, allowing users to built whatever possible and troubleshoot ffmpeg problems and incompatibilities using logs for each file
