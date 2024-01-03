@@ -1,19 +1,34 @@
 import sys, os, subprocess, re, json, argparse
 import datetime as dt
+from typing import Self
 from enum import Enum
 from pathlib import Path, PurePath
 import wx
 import wx.propgrid as wxpg
 import wx.adv as wxadv
 
+
+class MediaType(Enum):
+    VIDEO =    0, 'Video'
+    IMAGE =    1, 'Image(s)'
+    SEQUENCE = 2, 'Sequence'
+    AUDIO =    3, 'Audio'
+    DATA =     4, 'Data'
+
+    def __init__(self, id: int, doc: str):
+        self.id = id
+        self.doc = doc
+
 class Encoders():
 
     Collection = []
+    ClassName = 'Encoder'
 
     def __init__(self, *args, **kwargs):
-        self.index = Encoders.Count()
+        self.index = Encoders.EncodersCount()
         self.name: str = kwargs.get('name')
         self.type: str = kwargs.get('type')
+        self.system: bool = kwargs.get('system')
         self.general: list = kwargs.get('general')
         self.threading: list = kwargs.get('threading')
         self.formats: list = kwargs.get('formats')
@@ -26,65 +41,91 @@ class Encoders():
         cls.Collection.append(cls(*args, **kwargs))
 
     @classmethod
-    def GetbyIndex(cls, index: int):
+    def GetEncoderByIndex(cls, index: int):
         return cls.Collection[index]
 
     @classmethod
-    def Count(cls) -> int:
+    def GetEncoderByName(cls, name: str):
+        for preset in cls.Collection:
+            if preset.name == name:
+                return preset
+        return None
+
+    @classmethod
+    def EncodersCount(cls) -> int:
         return len(cls.Collection)
     
     @classmethod
-    def NameList(cls) -> list:
-        return [enc.name for enc in cls.Collection]
+    def GetEncoderNames(cls, type: MediaType) -> list:
+        return [enc.name for enc in cls.Collection if enc.type == type and enc.system == False]
 
 class VideoPresets():
 
     Collection = []
+    ClassName = 'Video preset'
 
-    def __init__(self, name: str, encoder: Encoders, removable: bool = False, editable: bool = True):
+    def __init__(self, name: str, encoder: Encoders, encoder_format: str, system: bool = False, editable: bool = True):
         self.name = name
-        self.index = VideoPresets.Count()
-        self.removable = removable
+        self.index = VideoPresets.PresetCount()
+        self.system = system
         self.editable = editable
         self.encoder = encoder
+        self.encoder_options = encoder.options
+        self.encoder_format = encoder_format
 
     @classmethod
-    def Add(cls, name: str, encoder: Encoders, removable: bool = False, editable: bool = True):
-        cls.Collection.append(cls(name, encoder, removable, editable))
+    def Add(cls, name: str, encoder: Encoders, encoder_format: str, system: bool = False, editable: bool = True):
+        cls.Collection.append(cls(name, encoder, encoder_format, system, editable))
 
     @classmethod
-    def GetByName(cls, name: str):
+    def GetPresetByName(cls, name: str) -> Self:
         for preset in cls.Collection:
             if preset.name == name:
                 return preset
         return None
             
     @classmethod
-    def GetbyIndex(cls, index: int):
+    def GetPresetByIndex(cls, index: int) -> Self:
         return cls.Collection[index]
     
     @classmethod
-    def Count(cls) -> int:
+    def PresetCount(cls) -> int:
         return len(cls.Collection)
     
     @classmethod
-    def NameList(cls) -> list:
+    def PresetNameList(cls) -> list:
         return [preset.name for preset in cls.Collection]
+
+    def SetVideoEncoder(self, encoder: Encoders) -> Self:
+        self.encoder = encoder
+        self.system = encoder.system
+        self.editable = True
+        self.encoder_options = encoder.options
+        self.encoder_format = encoder.formats[0]
+        return self
+
+    def GetValueIndex(self, options_list: list, suboption_name: str) -> int:
+        for i, suboption in enumerate(options_list):
+            if suboption['name'] == suboption_name:
+                return i
 
 class AudioPresets():
 
     Collection = []
+    ClassName = 'Audio preset'
 
-    def __init__(self, name: str, encoder: Encoders, removable: bool = False, editable: bool = True):
+    def __init__(self, name: str, encoder: Encoders, encoder_format: str, system: bool = False, editable: bool = True):
         self.name = name
         self.index = AudioPresets.Count()
-        self.removable = removable
+        self.system = system
         self.editable = editable
         self.encoder = encoder
+        self.encoder_options = encoder.options
+        self.encoder_format = encoder_format
 
     @classmethod
-    def Add(cls, name: str, encoder: Encoders, removable: bool = False, editable: bool = True):
-        cls.Collection.append(cls(name, encoder, removable, editable))
+    def Add(cls, name: str, encoder: Encoders, encoder_format: str, system: bool = False, editable: bool = True):
+        cls.Collection.append(cls(name, encoder, encoder_format, system, editable))
 
     @classmethod
     def GetByName(cls, name: str):
@@ -94,7 +135,7 @@ class AudioPresets():
             return None
             
     @classmethod
-    def GetbyIndex(cls, index: int):
+    def GetByIndex(cls, index: int):
         return cls.Collection[index]
     
     @classmethod
@@ -105,23 +146,12 @@ class AudioPresets():
     def NameList(cls) -> list:
         return [preset.name for preset in cls.Collection]    
 
-class MediaType(Enum):
-    video =    0, 'Video'
-    image =    1, 'Image(s)'
-    sequence = 2, 'Sequence'
-    audio =    3, 'Audio'
-    data =     4, 'Data'
-
-    def __init__(self, id: int, doc: str):
-        self.id = id
-        self.doc = doc
-
 class MediaFiles():
 
     Collection = []
 
     def __init__(self, filepath: str):
-        self.id = MediaFiles.Count()+1
+        self.id = MediaFiles.Count()+1 # starting at 1 to correspond to the list
         self.origpath = filepath
         self.filepath = filepath
         self.filename = os.path.basename(filepath)
@@ -188,12 +218,12 @@ class MediaFiles():
         # type detection from the probe
         fn = self.format.get('format_name')
         if has_tags(fn, ffmpeg.sequence_tags):
-            self.type = MediaType.image
+            self.type = MediaType.IMAGE
             # detect frame counter
             rs = re.compile(r'\d{3,6}$')
             counter_match = rs.search(self.basename)
             if counter_match is not None:
-                self.type = MediaType.sequence
+                self.type = MediaType.SEQUENCE
                 self.counter_length: str = len(counter_match.group())
                 self.filepath = self.filepath.replace(self.filename, '') # cut off filename
                 self.basename = self.basename.replace(counter_match.group(), f'%0{self.counter_length}d')
@@ -202,11 +232,11 @@ class MediaFiles():
                 # re-probe as sequence now
                 self.probe(['-pattern_type', 'sequence', '-framerate', str(self.format.get('r_frame_rate', self.out_framerate)), '-start_number', '0'])
         elif has_tags(fn, ffmpeg.formats_audio):
-            self.type = MediaType.audio
+            self.type = MediaType.AUDIO
         elif has_tags(fn, ffmpeg.formats_video):
-            self.type = MediaType.video
+            self.type = MediaType.VIDEO
         else:
-            self.type = MediaType.data
+            self.type = MediaType.DATA
    
     @classmethod
     def Add(cls, filepath: str):
@@ -262,7 +292,7 @@ class MediaFiles():
         app.frame.flog(text=f'File "{filepath}" deleted.')
 
 class FileDropTarget(wx.FileDropTarget): 
-    # !MEMO! can also identify Ctr/Shif/Alt, it's useful for more features
+    # !TODO! can also respond to Ctr/Shif/Alt, it's useful for more features
     def __init__(self, listbox):
         wx.FileDropTarget.__init__(self)
         self.listbox = listbox
@@ -282,6 +312,8 @@ class MyMainFrame(wx.Frame):
 
         self.SetSize((900, 900))
         self.SetTitle(MyApp.ver)
+        self.video_preset = None
+        self.audio_preset = None
         _icon = wx.NullIcon
         _icon.CopyFromBitmap(wx.Bitmap("ffenc.png", wx.BITMAP_TYPE_ANY))
         self.SetIcon(_icon)
@@ -312,7 +344,7 @@ class MyMainFrame(wx.Frame):
         sizer_nb_video_select = wx.BoxSizer(wx.VERTICAL)
 
         # Video preset list
-        self.list_video_preset = wx.ListBox(self.nb_video_select, wx.ID_ANY, choices=VideoPresets.NameList(), style=wx.LB_NEEDED_SB | wx.LB_SINGLE | wx.LB_OWNERDRAW)
+        self.list_video_preset = wx.ListBox(self.nb_video_select, wx.ID_ANY, choices=VideoPresets.PresetNameList(), style=wx.LB_NEEDED_SB | wx.LB_SINGLE | wx.LB_OWNERDRAW)
         sizer_nb_video_select.Add(self.list_video_preset, 1, wx.ALL | wx.EXPAND, 3)
         self.list_video_preset.SetBackgroundColour(wx.Colour(240, 240, 240))
         self.list_video_preset.SetItemForegroundColour(0, wx.Colour(80,10,10)) 
@@ -534,35 +566,44 @@ class MyMainFrame(wx.Frame):
             filepath = self.list_files.GetItemText(file_item, 1)
             MediaFiles.Delete(filepath)
 
-    def video_preset_selected(self, event):
+    def GetSelectedVideoPreset(self) -> VideoPresets:
         preset_item = self.list_video_preset.GetSelection()
-        self.prop_video_show(VideoPresets.GetbyIndex(preset_item))
+        if preset_item != wx.NOT_FOUND:
+            return VideoPresets.GetPresetByIndex(preset_item)
+        else:
+            return None
+
+    def video_preset_selected(self, event):
+        self.video_preset = self.GetSelectedVideoPreset()
+        if self.video_preset.system is False: 
+            self.prop_video_show()
 
     def video_preset_activated(self, event):
         file_item = self.list_files.GetFirstSelected()
-        preset_item = self.list_video_preset.GetSelection()
-        if preset_item != wx.NOT_FOUND:
-            preset = VideoPresets.GetbyIndex(preset_item)
+        if self.video_preset is not None:
             if file_item != wx.NOT_FOUND:
                 while file_item != wx.NOT_FOUND:
                     file_name = self.list_files.GetItemText(file_item, 1)
-                    MediaFiles.SetVideo(file_name, preset)
-                    self.list_files.SetItem(file_item, 3, preset.name)
+                    MediaFiles.SetVideo(file_name, self.video_preset)
+                    self.list_files.SetItem(file_item, 3, self.video_preset.name)
                     file_item = self.list_files.GetNextSelected(file_item)
             else:
-                if preset.removable: 
-                    self.prop_video_show(preset)
+                if self.video_preset.system is False: 
+                    self.prop_video_show()
                     self.nb_video.ChangeSelection(1)
+        else:
+            raise Exception('Video preset selection was lost. This is a bug, report!')
 
     def audio_preset_selected(self, event):
-        preset_item = self.list_audio_preset.GetSelection()
-        self.prop_audio_show(AudioPresets.GetbyIndex(preset_item))
+        #preset_item = self.list_audio_preset.GetSelection()
+        #self.prop_audio_show(AudioPresets.GetByIndex(preset_item))
+        pass
 
     def audio_preset_activated(self, event):
         file_item = self.list_files.GetFirstSelected()
         preset_item = self.list_audio_preset.GetSelection()
         if preset_item != wx.NOT_FOUND:
-            preset = AudioPresets.GetbyIndex(preset_item)
+            preset = AudioPresets.GetByIndex(preset_item)
             if file_item != wx.NOT_FOUND:
                 while file_item != wx.NOT_FOUND:
                     file_name = self.list_files.GetItemText(file_item, 1)
@@ -570,56 +611,106 @@ class MyMainFrame(wx.Frame):
                     self.list_files.SetItem(file_item, 4, preset.name)
                     file_item = self.list_files.GetNextSelected(file_item)
             else:
-                if preset.removable:
+                if preset.system is False:
                     self.prop_audio_show(preset)
                     self.nb_audio.ChangeSelection(1)
 
-    def prop_video_show(self, preset: VideoPresets):
-        print('selected preset index=', preset.index, 'name=', preset.name)
+    def prop_video_show(self):
+        print('selected preset index=', self.video_preset.index, 'name=', self.video_preset.name, 'encoder=', self.video_preset.encoder.name)
         self.prop_video_preset.Clear()
-        if preset.removable:
-            page = self.prop_video_preset.AddPage("Video Settings")
-            page.Append(wxpg.PropertyCategory("Video Preset"))
-            page.Append(wxpg.StringProperty("Name", wxpg.PG_LABEL, preset.name))
-            page.Append(wxpg.PropertyCategory("Encoder"))
-            preset_encoder = preset.encoder
-            page.Append(wxpg.EnumProperty("Codec", wxpg.PG_LABEL, Encoders.NameList(), range(Encoders.Count()), value=preset_encoder.index))
-            page.Append(wxpg.PropertyCategory("Container"))
-            page.Append(wxpg.EditEnumProperty("Format", wxpg.PG_LABEL, preset_encoder.formats, range(len(preset_encoder.formats)), value=preset_encoder.formats[0]))
-            page.Append(wxpg.PropertyCategory("Encoder options"))
-            page.Append(wxpg.EditEnumProperty("Color coding", wxpg.PG_LABEL, preset_encoder.colorcodings['values'], range(len(preset_encoder.colorcodings['values'])), value=preset_encoder.colorcodings['current']))
-        
-            for optionkey, optionval in preset_encoder.options.items():
-                #print('adding op:', optionkey)
-                if optionval['fixed']:
-                    enum_prop = wxpg.EnumProperty
-                    # Enum prop restricted, and wxpg requires int default value
-                    if type(optionval['values'][0]) != dict:
-                        current = optionval['values'].index(optionval['current'])
-                    else:
-                        for i, x in enumerate(optionval['values']):
-                            if x['name'] == optionval['current']:
-                                current = i
-                                break
+        self.vp_page = self.prop_video_preset.AddPage("Video Settings")
+        self.vp_page.Append(wxpg.PropertyCategory("Video Preset"))
+        self.vp_page.Append(wxpg.StringProperty("Name", wxpg.PG_LABEL, self.video_preset.name))
+        self.vp_page.Append(wxpg.PropertyCategory("Codec"))
+        list_encoders = Encoders.GetEncoderNames(MediaType.VIDEO)
+        self.vp_page.Append(wxpg.EditEnumProperty("Encoder", wxpg.PG_LABEL, list_encoders, range(len(list_encoders)), value=self.video_preset.encoder.name))
+        self.vp_page.Append(wxpg.PropertyCategory("Container"))
+        self.vp_page.Append(wxpg.EditEnumProperty("Format", wxpg.PG_LABEL, self.video_preset.encoder.formats, range(len(self.video_preset.encoder.formats)), value=self.video_preset.encoder_format))
+        self.vp_page.Append(wxpg.PropertyCategory("Encoder options"))
+    
+        for optionkey, optionval in self.video_preset.encoder_options.items():
+            #print('adding op:', optionkey)
+            if optionval['fixed']:
+                enum_prop = wxpg.EnumProperty
+                # Enum prop restricted case, and wxpg requires int default value
+                if type(optionval['values'][0]) != dict:
+                    current = optionval['values'].index(optionval['current'])
                 else:
-                    # Enum prop editable, and wxpg requires str default value
-                    enum_prop = wxpg.EditEnumProperty
-                    current = optionval['current']
+                    for i, x in enumerate(optionval['values']):
+                        if x['name'] == optionval['current']:
+                            current = i
+                            break
+            else:
+                # Enum prop editable case, and wxpg requires str default value
+                enum_prop = wxpg.EditEnumProperty
+                current = optionval['current']
 
-                if type(optionval['values'][0]) == dict: # if list elements are dicts get the list of name keys
-                    opt_values = [x['name'] for x in optionval['values']]
-                    page.Append(enum_prop(optionkey, wxpg.PG_LABEL, opt_values, range(len(opt_values)), value=current))
-                    if optionval['values'][current].get('suboptions', None) is not None: 
-                        print('theres subs in', optionval['values'][current]['name'])
-                        for suboption in optionval['values'][current]['suboptions']:
-                            page.Append(wxpg.EditEnumProperty(suboption['name'], wxpg.PG_LABEL, suboption['values'], range(len(suboption['values'])), value=suboption['current']))
-                else:
-                    page.Append(enum_prop(optionkey, wxpg.PG_LABEL, optionval['values'], range(len(optionval['values'])), value=current))
+            if type(optionval['values'][0]) == dict: # if elements are dicts get the list of name keys
+                opt_values = [x['name'] for x in optionval['values']]
+                self.vp_page.Append(enum_prop(optionkey, wxpg.PG_LABEL, opt_values, range(len(opt_values)), value=current))
+                if optionval['values'][current].get('suboptions', None) is not None: 
+                    print('theres subs in', optionval['values'][current]['name'])
+                    for suboption in optionval['values'][current]['suboptions']:
+                        self.vp_page.Append(wxpg.EditEnumProperty(suboption['name'], wxpg.PG_LABEL, suboption['values'], range(len(suboption['values'])), value=suboption['current']))
+            else: # list type
+                self.vp_page.Append(enum_prop(optionkey, wxpg.PG_LABEL, optionval['values'], range(len(optionval['values'])), value=current))
+
+            # next to add !TODO! color data and transform filters
 
     def pg_changed(self, event: wxpg.PropertyGridEvent):
         print('video prop changed item:', event.PropertyName, 'to value:', event.Value)
-        if event.PropertyName == 'Codec':
-           self.prop_video_show(Encoders.GetbyIndex(event.Value))
+        val_int = type(event.Value) == int
+        match event.PropertyName:
+            case 'Encoder':
+                list_encoders = Encoders.GetEncoderNames(MediaType.VIDEO)
+                val = list_encoders[event.Value] if val_int else event.Value
+                self.video_preset = self.video_preset.SetVideoEncoder(Encoders.GetEncoderByName(val))
+            case 'Format':
+                val = self.video_preset.encoder.formats[event.Value] if val_int else event.Value
+                self.video_preset.encoder_format = val
+            case 'Color coding':
+                val = self.video_preset.encoder.options['Color coding']['values'][event.Value] if val_int else event.Value
+                self.video_preset.encoder_options['Color coding'].update({'current': val})
+            case 'Rate control':
+                opt_values = [x['name'] for x in self.video_preset.encoder.options['Rate control']['values']]
+                val = opt_values[event.Value] if val_int else event.Value
+                self.video_preset.encoder_options['Rate control'].update({'current': val})
+            case 'Preset':
+                val = self.video_preset.encoder_options['Preset']['values'][event.Value] if val_int else event.Value
+                self.video_preset.encoder_options['Preset'].update({'current': val})
+            case 'Tune':
+                val = self.video_preset.encoder_options['Tune']['values'][event.Value] if val_int else event.Value
+                self.video_preset.encoder_options['Tune'].update({'current': val})
+            case 'Profile':
+                val = self.video_preset.encoder_options['Profile']['values'][event.Value] if val_int else event.Value
+                self.video_preset.encoder_options['Profile'].update({'current': val})
+            case 'Lookahead':
+                val = self.video_preset.encoder_options['Lookahead']['values'][event.Value] if val_int else event.Value
+                self.video_preset.encoder_options['Lookahead'].update({'current': val})
+            case 'Quality':
+                branch = self.video_preset.encoder_options['Rate control']
+                index = self.video_preset.GetValueIndex(branch['values'], branch['current'])
+                branch = self.video_preset.encoder_options['Rate control']['values'][index]['suboptions']
+                subindex = self.video_preset.GetValueIndex(branch, 'Quality')
+                val = branch[subindex]['values'][event.Value] if val_int else event.Value
+                self.video_preset.encoder_options['Rate control']['values'][index]['suboptions'][subindex].update({'current': val})
+            case 'Max quality':
+                branch = self.video_preset.encoder_options['Rate control']
+                index = self.video_preset.GetValueIndex(branch['values'], branch['current'])
+                branch = self.video_preset.encoder_options['Rate control']['values'][index]['suboptions']
+                subindex = self.video_preset.GetValueIndex(branch, 'Max quality')
+                val = branch[subindex]['values'][event.Value] if val_int else event.Value
+                self.video_preset.encoder_options['Rate control']['values'][index]['suboptions'][subindex].update({'current': val})
+            case 'Bitrate':
+                branch = self.video_preset.encoder_options['Rate control']
+                index = self.video_preset.GetValueIndex(branch['values'], branch['current'])
+                branch = self.video_preset.encoder_options['Rate control']['values'][index]['suboptions']
+                subindex = self.video_preset.GetValueIndex(branch, 'Bitrate')
+                val = branch[subindex]['values'][event.Value] if val_int else event.Value
+                self.video_preset.encoder_options['Rate control']['values'][index]['suboptions'][subindex].update({'current': val})
+        #print('\nafter update preset_encoder_options=', preset.encoder_options)
+        self.prop_video_show()
+
 
     def prop_audio_show(self, preset_name: str = None):
         self.prop_audio_preset.Clear()
@@ -735,7 +826,7 @@ class MyMainFrame(wx.Frame):
             tab['text'].SetValue(f'{timestamp}: {text}')
 
 class MyApp(wx.App):
-    ver = 'FFEnc v0.08a'
+    ver = 'FFEnc v0.09a'
     def OnInit(self):
         self.frame = MyMainFrame(None, wx.ID_ANY, "")
         self.SetTopWindow(self.frame)
@@ -831,7 +922,6 @@ class FFmpeg():
 class Filter():
     pass
 
-
 def notify(text: str):
     feicon = wx.NullIcon
     feicon.CopyFromBitmap(wx.Bitmap("ffenc.png", wx.BITMAP_TYPE_ANY))
@@ -852,42 +942,53 @@ if __name__ == "__main__":
     # No video
     Encoders.Add(
         name=         'No video',
-        type=         MediaType.video,
+        type=         MediaType.VIDEO,
+        system=       True,
         options=      {'ffoption': None}
     )
     # No audio
     Encoders.Add(
         name=         'No audio',
-        type=         MediaType.audio,
+        type=         MediaType.AUDIO,
+        system=       True,
         options=      {'ffoption': None}
     )
     # Video stream copy
     Encoders.Add(
         name=         'Video stream copy',
-        type=         MediaType.video,
+        type=         MediaType.VIDEO,
+        system=       True,
         options=      {'ffoption': '-c:v copy'}
     )
     # Audio stream copy
     Encoders.Add(
         name=         'Audio stream copy',
-        type=         MediaType.audio,
+        type=         MediaType.AUDIO,
+        system=       True,
         options=      {'ffoption': '-c:a copy'}
     )     
     # Nearly default libx264 mp4
     Encoders.Add(
         name=         'libx264',
-        type=         MediaType.video,
+        type=         MediaType.VIDEO,
+        system=       False,
         general=      ['dr1', 'delay', 'threads'],
         threading=    ['other'],
         formats=      ['mp4', 'mov'],
         audio_codecs= ['aac', 'ac3', 'mp3', 'dts', 'mp2', 'alac', 'dvaudio'],
-        colorcodings= {
-            'ffoption': '-pix_fmt',
-            'values': ['yuv420p', 'yuvj420p', 'yuv422p', 'yuvj422p', 'yuv444p', 'yuvj444p', 'yuv420p10le', 'yuv422p10le', 'yuv444p10le', 'gray', 'gray10le'],
-            'current': 'yuv420p',
-            'fixed': True
-        },
         options=      {
+            'Color coding': {
+                'ffoption': '-pix_fmt',
+                'values': ['yuv420p', 'yuvj420p', 'yuv422p', 'yuvj422p', 'yuv444p', 'yuvj444p', 'yuv420p10le', 'yuv422p10le', 'yuv444p10le', 'gray', 'gray10le'],
+                'current': 'yuv420p',
+                'fixed': True
+            },
+            'Preset': {
+                'ffoption': '-preset',
+                'values': ['medium', 'ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'slow', 'veryslow', 'placebo'],
+                'current': 'slow',
+                'fixed': False,
+            },
             'Rate control': {
                 'values': [
                     {
@@ -896,11 +997,17 @@ if __name__ == "__main__":
                         'suboptions': [
                             {
                             'name': 'Quality',
-                            'values': ['256k', '512k', '1M', '2M', '4M', '8M', '10M', '15M', '20M', '30M', '40M'],
-                            'current': '8M',
-                            'fixed': False
-                            }
-                        ]
+                            'values': ['-1', '0', '5', '10', '20', '25', '30', '40', '50'],
+                            'current': '-1',
+                            'fixed': False,
+                            },
+                            {
+                            'name': 'Max quality',
+                            'values': ['-1', '0', '5', '10', '20', '25', '30', '40', '50'],
+                            'current': '-1',
+                            'fixed': False,
+                            },
+                        ],
                     },
                     {
                         'name':'Constant quantization',
@@ -910,63 +1017,76 @@ if __name__ == "__main__":
                             'name': 'Rate',
                             'values': ['-1', '5', '10', '20', '25', '30', '40', '51'],
                             'current': '25',
-                            'fixed': False
-                            }
-                        ]
+                            'fixed': False,
+                            },
+                        ],
                     },
                     {
                         'name':'AQ mode',
                         'ffoption': '-aq-mode',
-                        'values': ['-1', '0', '1', '2', '3'],
-                        'current': '-1',
-                        'fixed': True
-                    }
+                        'suboptions': [
+                            {
+                            'name': 'AQ method',
+                            'values': ['-1', '0', '1', '2', '3'],
+                            'current': '-1',
+                            'fixed': True,
+                            },
+                            {
+                            'name': 'AQ strength',
+                            'values': ['-1', '0', '10', '20', '50', '100', '500'],
+                            'current': '-1',
+                            'fixed': False,
+                            },
+                        ],
+                    },
                 ],
                 'current': 'Constant quality',
                 'fixed': True,
-            },
-            'Preset': {
-                'ffoption': '-preset',
-                'values': ['medium', 'ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'slow', 'veryslow', 'placebo'],
-                'current': 'slow',
-                'fixed': False
             },
             'Tune': {
                 'ffoption': '-tune',
                 'values': ['film', 'grain', 'animation', 'zerolatency', 'fastdecode', 'stillimage'],
                 'current': 'film', 
-                'fixed': True
+                'fixed': True,
             },
             'Lookahead': {
                 'ffoption': '-rc-lookahead',
                 'values': ['-1', '5', '10', '25', '30', '50', '100'],
                 'current': '25',
-                'fixed': False
-            }
+                'fixed': False,
+            },
         }
     )
     # Nearly default nv_enc264 mp4
     Encoders.Add(
         name=         'h264_nvenc',
-        type=         MediaType.video,
+        type=         MediaType.VIDEO,
+        system=       False,
         general=      ['dr1', 'delay', 'hardware'],
         threading=    ['none'],
         formats=      ['mp4', 'mov'],
         audio_codecs= ['aac', 'ac3', 'mp3', 'dts', 'mp2', 'alac', 'dvaudio'],
         devices=      ['cuda', 'd3d11va'],
-        colorcodings= {
-            'ffoption': '-pix_fmt',
-            'values': ['yuv420p', 'yuv444p', 'yuv444p16le', 'p010le', 'p016le', 'bgr0', 'bgra', 'rgb0', 'rgba'],
-            'current': 'yuv420p',
-            'fixed': True
-        },
         options=
         {
+            'Color coding': {
+                'ffoption': '-pix_fmt',
+                'values': ['yuv420p', 'yuv444p', 'yuv444p16le', 'p010le', 'p016le', 'bgr0', 'bgra', 'rgb0', 'rgba'],
+                'current': 'yuv420p',
+                'curindex': 0, 
+                'fixed': False,
+            },
+            'Preset': {
+                'ffoption': '-preset',
+                'values': ['p1', 'p2', 'p3 ', 'p4', 'p5', 'p6', 'p7'],
+                'current': 'p6',
+                'fixed': False,
+            },
             'Rate control': {
                 'values': [
                     {
                         'name': 'Auto by preset',
-                        'ffoption': '-rc -1'
+                        'ffoption': '-rc -1',
                     },
                     {
                         'name': 'Constant QP mode',
@@ -977,7 +1097,7 @@ if __name__ == "__main__":
                             'ffoption': '-qp',
                             'values': ['-1', '0', '5', '10', '20', '25', '30', '40', '51'],
                             'current': '0',
-                            'fixed': False
+                            'fixed': False,
                             },
                         ],
                     },
@@ -990,7 +1110,7 @@ if __name__ == "__main__":
                             'ffoption': '-cq',
                             'values': ['0', '5', '10', '20', '25', '30', '40', '51'],
                             'current': '0',
-                            'fixed': False
+                            'fixed': False,
                             },
                         ],
                     },
@@ -1003,7 +1123,7 @@ if __name__ == "__main__":
                             'ffoption': '-v:b',
                             'values': ['256k', '512k', '1M', '2M', '4M', '8M', '12M', '20M', '30M', '40M'],
                             'current': '8M',
-                            'fixed': False
+                            'fixed': False,
                             },
                         ],
                     },
@@ -1016,7 +1136,7 @@ if __name__ == "__main__":
                             'ffoption': '-v:b',
                             'values': ['256k', '512k', '1M', '2M', '4M', '8M', '12M', '20M', '30M', '40M'],
                             'current': '8M',
-                            'fixed': False
+                            'fixed': False,
                             },
                         ],
                     },
@@ -1029,7 +1149,7 @@ if __name__ == "__main__":
                             'ffoption': '-v:b',
                             'values': ['256k', '512k', '1M', '2M', '4M', '8M', '12M', '20M', '30M', '40M'],
                             'current': '8M',
-                            'fixed': False
+                            'fixed': False,
                             },
                         ],
                     },
@@ -1042,48 +1162,42 @@ if __name__ == "__main__":
                             'ffoption': '-cq',
                             'values': ['0', '5', '10', '20', '25', '30', '40', '51'],
                             'current': '0',
-                            'fixed': False
+                            'fixed': False,
                             },
                         ],
                     },
                 ],
                 'current': 'Auto by preset',
-                'fixed': True
-            },
-            'Preset': {
-                'ffoption': '-preset',
-                'values': ['p1', 'p2', 'p3 ', 'p4', 'p5', 'p6', 'p7'],
-                'current': 'p6',
-                'fixed': False
+                'fixed': True,
             },
             'Tune': {
                 'ffoption': '-tune',
                 'values': ['hq', 'll', 'ull', 'lossless'],
                 'current': 'hq',
-                'fixed': True
+                'fixed': True,
             },
             'Profile': {
                 'ffoption': '-profile',
                 'values': ['baseline', 'main', 'high', 'high444p'],
                 'current': 'main',
-                'fixed': True
+                'fixed': True,
             },
             'Lookahead': {
                 'ffoption': '-rc-lookahead',
                 'values': ['-1', '5', '10', '25', '30', '50', '100'],
                 'current': '25',
-                'fixed': False
-            }
+                'fixed': False,
+            },
         }
     )
     
     # Add system codecs and presets
-    VideoPresets.Add('No video', Encoders.GetbyIndex(0), removable=False, editable=False)
-    VideoPresets.Add('Stream copy', Encoders.GetbyIndex(1), removable=False, editable=False)
-    AudioPresets.Add('No audio', Encoders.GetbyIndex(2), removable=False, editable=False)
-    AudioPresets.Add('Stream copy', Encoders.GetbyIndex(3), removable=False, editable=False)
-    VideoPresets.Add('libx h264 420p cbr 8M slow', Encoders.GetbyIndex(4), removable=True,  editable=False)
-    VideoPresets.Add('nv h264 420p Preset p6-Better', Encoders.GetbyIndex(5), removable=True,  editable=False)
+    VideoPresets.Add('No video', Encoders.GetEncoderByIndex(0), '', system=True, editable=False)
+    VideoPresets.Add('Stream copy', Encoders.GetEncoderByIndex(1), '', system=True, editable=False)
+    AudioPresets.Add('No audio', Encoders.GetEncoderByIndex(2), '', system=True, editable=False)
+    AudioPresets.Add('Stream copy', Encoders.GetEncoderByIndex(3), '', system=True, editable=False)
+    VideoPresets.Add('libx h264 420p cbr 8M slow', Encoders.GetEncoderByIndex(4), 'mp4', system=False, editable=True)
+    VideoPresets.Add('nv h264 420p Preset p6-Better', Encoders.GetEncoderByIndex(5), 'mp4', system=False, editable=True)
     
     app = MyApp(0)
     app.frame.flog(text=f'{app.ver} started.')
