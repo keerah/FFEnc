@@ -4,16 +4,17 @@ from typing import Self
 from enum import Enum
 from pathlib import Path, PurePath
 import wx
-import wx.propgrid as wxpg
-import wx.adv as wxadv
-
+import wx.richtext as rt
+import wx.propgrid as pg
+import wx.adv as adv
 
 class MediaType(Enum):
-    VIDEO =    0, 'Video'
-    IMAGE =    1, 'Image(s)'
-    SEQUENCE = 2, 'Sequence'
-    AUDIO =    3, 'Audio'
-    DATA =     4, 'Data'
+    NONE  =    -1, 'Not media'
+    VIDEO =    0,  'Video'
+    IMAGE =    1,  'Image(s)'
+    SEQUENCE = 2,  'Sequence'
+    AUDIO =    3,  'Audio'
+    DATA =     4,  'Data'
 
     def __init__(self, id: int, doc: str):
         self.id = id
@@ -23,9 +24,37 @@ class Encoders():
 
     Collection = []
     ClassName = 'Encoder'
+    video_filters = {
+        'Scale filter': True,
+        'Scale': {
+            'ffoption': '-???', 
+            'values':   ['-1', '320', '480', '720', '1080', '2160'],
+            'current':  '-1',
+            'doc':      'Scale video',
+            'fixed':    False,
+        },
+        'Scale algo': {
+            'ffoption': '-???', 
+            'values':   ['bilinear', 'bicubic', 'bicublin', 'gauss', 'sinc', 'lanczos',],
+            'current':  'bicubic',
+            'doc':      'Scaling algorythm',
+            'fixed':    False,
+        },
+    }
+    audio_filters = {
+        'Volume filter': True,
+        'Volume': {
+            'name':     'Volume',
+            'ffoption': '-???', 
+            'values':   ['25', '50', '75', '100', '125', '150'],
+            'current':  '100',
+            'doc':      'Change audio volume',
+            'fixed':    False,
+        }
+    }
 
     def __init__(self, *args, **kwargs):
-        self.index = Encoders.EncodersCount()
+        self.index = Encoders.Count()
         self.name: str = kwargs.get('name')
         self.type: str = kwargs.get('type')
         self.system: bool = kwargs.get('system')
@@ -35,28 +64,32 @@ class Encoders():
         self.audio_codecs: list = kwargs.get('audio_codecs')
         self.colorcodings: dict = kwargs.get('colorcodings')
         self.options: dict = kwargs.get('options')
+        if self.type == MediaType.VIDEO:
+            self.options.update(self.video_filters)
+        elif self.type == MediaType.AUDIO:
+            self.options.update(self.audio_filters)
 
     @classmethod
     def Add(cls, *args, **kwargs):
         cls.Collection.append(cls(*args, **kwargs))
 
     @classmethod
-    def GetEncoderByIndex(cls, index: int):
+    def ByIndex(cls, index: int):
         return cls.Collection[index]
 
     @classmethod
-    def GetEncoderByName(cls, name: str):
+    def ByName(cls, name: str):
         for preset in cls.Collection:
             if preset.name == name:
                 return preset
         return None
 
     @classmethod
-    def EncodersCount(cls) -> int:
+    def Count(cls) -> int:
         return len(cls.Collection)
     
     @classmethod
-    def GetEncoderNames(cls, type: MediaType) -> list:
+    def Names(cls, type: MediaType) -> list:
         return [enc.name for enc in cls.Collection if enc.type == type and enc.system == False]
 
 class VideoPresets():
@@ -66,15 +99,15 @@ class VideoPresets():
     wx_color_sys = wx.Colour(80,10,10)
     wx_color = wx.Colour(80,80,80)  
 
-    def __init__(self, name: str, encoder: Encoders, encoder_default_format: str, system: bool = False, editable: bool = True):
+    def __init__(self, name: str, encoder: Encoders, default_format: str, system: bool = False):
         if encoder.type == MediaType.VIDEO:
             self.name = name
             self.index = VideoPresets.Count()
             self.system = system
-            self.editable = editable
             self.encoder = encoder
             self.encoder_options = encoder.options
-            self.encoder_default_format = encoder_default_format
+            self.default_format = default_format
+            self.options = self.encoder.options
             list_count = app.frame.list_vp.GetCount()
             app.frame.list_vp.InsertItems([self.name], list_count)
             if self.system: app.frame.list_vp.SetItemForegroundColour(list_count, self.wx_color_sys) 
@@ -82,8 +115,8 @@ class VideoPresets():
             raise Exception('You are trying to assing a non-video Encoder to a video preset.')
 
     @classmethod
-    def Add(cls, name: str, encoder: Encoders, encoder_default_format: str, system: bool = False, editable: bool = True):
-        cls.Collection.append(cls(name, encoder, encoder_default_format, system, editable))
+    def Add(cls, name: str, encoder: Encoders, default_format: str, system: bool = False):
+        cls.Collection.append(cls(name, encoder, default_format, system))
 
     @classmethod
     def GetPresetByName(cls, name: str) -> Self:
@@ -109,7 +142,7 @@ class VideoPresets():
         self.system = encoder.system
         self.editable = True
         self.encoder_options = encoder.options
-        self.encoder_default_format = encoder.formats[0]
+        self.default_format = encoder.formats[0]
         return self
 
     def GetValueIndex(self, options_list: list, suboption_name: str) -> int:
@@ -124,7 +157,7 @@ class AudioPresets():
     wx_color_sys = wx.Colour(80,10,10)
     wx_color = wx.Colour(80,80,80)  
 
-    def __init__(self, name: str, encoder: Encoders, encoder_default_format: str, system: bool = False, editable: bool = True):
+    def __init__(self, name: str, encoder: Encoders, default_format: str, system: bool = False, editable: bool = True):
         if encoder.type == MediaType.AUDIO:
             self.name = name
             self.index = AudioPresets.Count()
@@ -132,7 +165,7 @@ class AudioPresets():
             self.editable = editable
             self.encoder = encoder
             self.encoder_options = encoder.options
-            self.encoder_default_format = encoder_default_format
+            self.default_format = default_format
             list_count = app.frame.list_ap.GetCount()
             app.frame.list_ap.InsertItems([self.name], list_count)
             if self.system: app.frame.list_ap.SetItemForegroundColour(list_count, self.wx_color_sys) 
@@ -140,18 +173,18 @@ class AudioPresets():
             raise Exception('You are trying to assing a non-audio Encoder to a video preset.')
 
     @classmethod
-    def Add(cls, name: str, encoder: Encoders, encoder_default_format: str, system: bool = False, editable: bool = True):
-        cls.Collection.append(cls(name, encoder, encoder_default_format, system, editable))
+    def Add(cls, name: str, encoder: Encoders, default_format: str, system: bool = False, editable: bool = True):
+        cls.Collection.append(cls(name, encoder, default_format, system, editable))
 
     @classmethod
-    def GetPresetByName(cls, name: str) -> Self:
+    def ByName(cls, name: str) -> Self:
         for preset in cls.Collection:
             if preset.name == name:
                 return preset
             return None
             
     @classmethod
-    def GetPresetByIndex(cls, index: int) -> Self:
+    def ByIndex(cls, index: int) -> Self:
         return cls.Collection[index]
     
     @classmethod
@@ -159,7 +192,7 @@ class AudioPresets():
         return len(cls.Collection)
     
     @classmethod
-    def NameList(cls) -> list:
+    def Names(cls) -> list:
         return [preset.name for preset in cls.Collection]
     
     def SetAudioEncoder(self, encoder: Encoders) -> Self:
@@ -167,12 +200,12 @@ class AudioPresets():
         self.system = encoder.system
         self.editable = True
         self.encoder_options = encoder.options
-        self.encoder_default_format = encoder.formats[0]
+        self.default_format = encoder.formats[0]
         return self
 
 class MediaFiles():
 
-    Collection = []
+    Collection: list[Self] = []
 
     def __init__(self, filepath: str):
         self.id = MediaFiles.Count()+1 # starting at 1 to correspond to the list
@@ -189,40 +222,63 @@ class MediaFiles():
         self.detect_type()
         app.frame.list_sources.Append([self.id, self.filepath, self.type.doc, 'Not set', 'Not set']) 
         self.log_panel = app.frame.log_add(self.filename, self)
-        app.frame.flog(text=f'File "{self.filename}" added.')
-        app.frame.flog(self.log_panel, f'File "{self.filename}" added.')
+        app.frame.flog(text='File', file=self.filename, end='added.')
+        app.frame.flog(tab=self.log_panel, text='File', file=self.filename, end='added.')
         print('Init: Media added:', filepath)
 
 
     def __new__(cls, filepath: str):
+        result = None
         if cls.GetByFilepath(filepath) is None:
-            print('instance added')
-            return super(MediaFiles, cls).__new__(cls)
+            if cls.probe_type(filepath):
+                result = super(MediaFiles, cls).__new__(cls)
         else:
-            print('instance not added')
-            app.frame.flog(text=f'File {filepath} was already added to the sources. Skipped.')
-            return None
+            app.frame.flog(text='File', file=filepath, end='is already in the sources. Skipped.')
+        return result
+   
+    @classmethod
+    def Add(cls, filepath: str):
+        item = cls(filepath)
+        if item is not None:
+            cls.Collection.append(item)
+
+    @classmethod
+    def probe_type(cls, filename: str) -> bool:
+        print('type probe')
+        probe_param = [
+            ffmpeg.ffprobeexe,
+            '-v', 'error',
+            '-hide_banner',
+            filename]
+        try:
+            probe = subprocess.check_output(probe_param, encoding='utf-8')
+        except:
+            app.frame.flog(text=f'FFmpeg did not recognize', file=os.path.basename(filename), end='as media file')
+            return False
+        else:
+            return True
 
     def probe(self, sequence_param: list = None):
         probe_param = [
                 ffmpeg.ffprobeexe,
                 '-v', 'error',
                 '-hide_banner',
-                '-show_streams', '-show_format',
+                '-show_streams',
+                '-show_format',
                 '-sexagesimal',
                 '-of', 'json',
                 self.filepath]
         if sequence_param is not None: 
-            app.frame.flog(text=f'Re-probing file "{self.filename}" as sequence.')
+            app.frame.flog(text='Re-probing file', file=self.filename, end='as sequence.')
             probe_param[9:9] = sequence_param
         else:
-            app.frame.flog(text=f'Probing file "{self.filename}".')
+            app.frame.flog(text='Probing file', file=self.filename)
         try:
             probe = subprocess.check_output(probe_param, encoding='utf-8')
         except:
-            app.frame.flog(text=f'Unable to add file "{self.filename}". Check if it\'s a media file. Skipped.')
-            self.streams = None
+            app.frame.flog(text=f'Unable to add file', file=self.filename)
             self.format = None
+            return None
         else:
             p = json.loads(probe)
             self.streams: list = p.get('streams')
@@ -261,10 +317,6 @@ class MediaFiles():
             self.type = MediaType.VIDEO
         else:
             self.type = MediaType.DATA
-   
-    @classmethod
-    def Add(cls, filepath: str):
-        cls.Collection.append(cls(filepath))
     
     @classmethod
     def GetIndex(cls, media) -> int:
@@ -275,11 +327,11 @@ class MediaFiles():
         return cls.GetByFilepath(filepath).id
 
     @classmethod
-    def GetByIndex(cls, index: int):
+    def GetByIndex(cls, index: int) -> Self:
         return cls.Collection[index]
 
     @classmethod
-    def GetByFilepath(cls, filepath: str):
+    def GetByFilepath(cls, filepath: str) -> Self:
         for media in cls.Collection:
             if media.filepath == filepath:
                 return media
@@ -322,17 +374,30 @@ class FileDropTarget(wx.FileDropTarget):
         self.listbox = listbox
 
     def OnDropFiles(self, x, y, filepaths):
-        app.frame.flog(text=f'Adding {len(filepaths)} files...')
+        app.frame.flog(text='Adding', file=len(filepaths), end='files...')
         app.frame.list_sources.Select(-1)
         for filepath in filepaths:
             MediaFiles.Add(filepath)
         return True
 
+class FFColor(Enum):
+    TEXT = 1, (10, 10, 10)
+    FILE = 2, (25, 50, 220)
+    ERR  = 3, (250, 50, 50)
+
+    def __init__(self, id: int, value: tuple[int,int,int]):
+        self.id = id
+        self._value_ = value
+
+    @property
+    def wx(self) -> tuple[int,int,int]:
+        return self.value
+
 class MyMainFrame(wx.Frame):
-    def __init__(self, *args, **kwds):
+    def __init__(self, *args, **kwargs):
         # begin wxGlade: MyFrame.__init__
-        kwds["style"] = kwds.get("style", 0) | wx.DEFAULT_FRAME_STYLE
-        wx.Frame.__init__(self, *args, **kwds)
+        kwargs["style"] = kwargs.get("style", 0) | wx.DEFAULT_FRAME_STYLE
+        wx.Frame.__init__(self, *args, **kwargs)
 
         self.SetSize((900, 900))
         self.SetTitle(MyApp.ver)
@@ -380,7 +445,7 @@ class MyMainFrame(wx.Frame):
 
         sizer_vp_edit = wx.BoxSizer(wx.VERTICAL)
 
-        self.pg_vp = wxpg.PropertyGridManager(self.panel_vp_edit, wx.ID_ANY, style=wxpg.PG_BOLD_MODIFIED | wxpg.PG_EX_HELP_AS_TOOLTIPS | wxpg.PG_TOOLTIPS)
+        self.pg_vp = pg.PropertyGridManager(self.panel_vp_edit, wx.ID_ANY, style=pg.PG_BOLD_MODIFIED | pg.PG_EX_HELP_AS_TOOLTIPS | pg.PG_TOOLTIPS)
         sizer_vp_edit.Add(self.pg_vp, 9, wx.ALL | wx.EXPAND, 3)
         #self.prop_video_show()
 
@@ -410,7 +475,7 @@ class MyMainFrame(wx.Frame):
         sizer_ap_select = wx.BoxSizer(wx.VERTICAL)
 
         # Audio preset list
-        self.list_ap = wx.ListBox(self.nb_ap_select, wx.ID_ANY, choices=AudioPresets.NameList(), style=wx.LB_NEEDED_SB | wx.LB_SINGLE | wx.LB_OWNERDRAW)
+        self.list_ap = wx.ListBox(self.nb_ap_select, wx.ID_ANY, choices=AudioPresets.Names(), style=wx.LB_NEEDED_SB | wx.LB_SINGLE | wx.LB_OWNERDRAW)
         self.list_ap.SetBackgroundColour(wx.Colour(240, 240, 240))
         sizer_ap_select.Add(self.list_ap, 1, wx.ALL | wx.EXPAND, 3)
         self.list_ap.SetBackgroundColour(wx.Colour(240, 240, 240))
@@ -422,7 +487,7 @@ class MyMainFrame(wx.Frame):
 
         sizer_nb_ap_edit = wx.BoxSizer(wx.VERTICAL)
 
-        self.pg_ap = wxpg.PropertyGridManager(self.nb_ap_edit, wx.ID_ANY, style=wxpg.PG_BOLD_MODIFIED | wxpg.PG_EX_HELP_AS_TOOLTIPS | wxpg.PG_TOOLTIPS)
+        self.pg_ap = pg.PropertyGridManager(self.nb_ap_edit, wx.ID_ANY, style=pg.PG_BOLD_MODIFIED | pg.PG_EX_HELP_AS_TOOLTIPS | pg.PG_TOOLTIPS)
         sizer_nb_ap_edit.Add(self.pg_ap, 9, wx.ALL | wx.EXPAND, 3)
         #self.prop_audio_show()
 
@@ -507,7 +572,7 @@ class MyMainFrame(wx.Frame):
         # Activity logs
         self.nb_log = wx.Notebook(self.panel_main, wx.ID_ANY)
         sizer_main.Add(self.nb_log, 2, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 5)
-        self.flog_tab = self.log_add('FFEnc log', None) # [{'panel':,'sizer':,'text':}]
+        self.flog_tab = self.log_add('FFEnc', None) # {'panel':,'sizer':,'text':}
 
         # Encoded
         label_queue = wx.StaticText(self.panel_main, wx.ID_ANY, "Results", style=wx.ALIGN_LEFT)
@@ -536,8 +601,8 @@ class MyMainFrame(wx.Frame):
         self.list_vp.Bind(wx.EVT_LISTBOX_DCLICK, self.vp_activated) # assign video preset
         self.list_ap.Bind(wx.EVT_LISTBOX, self.ap_selected)
         self.list_ap.Bind(wx.EVT_LISTBOX_DCLICK, self.ap_activated) # assign audio preset
-        self.pg_vp.Bind(wxpg.EVT_PG_CHANGED, self.pg_vp_changed)
-        self.pg_ap.Bind(wxpg.EVT_PG_CHANGED, self.pg_ap_changed)
+        self.pg_vp.Bind(pg.EVT_PG_CHANGED, self.pg_vp_changed)
+        self.pg_ap.Bind(pg.EVT_PG_CHANGED, self.pg_ap_changed)
         self.button_vp_save.Bind(wx.EVT_BUTTON, self.vp_save)
         self.button_vp_dup.Bind(wx.EVT_BUTTON, self.vp_dup)
         self.button_vp_del.Bind(wx.EVT_BUTTON, self.vp_del)
@@ -547,14 +612,41 @@ class MyMainFrame(wx.Frame):
         self.list_sources.Bind(wx.EVT_LIST_ITEM_SELECTED, self.file_selected)
         self.list_sources.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.file_activated) # delete
         self.button_encode.Bind(wx.EVT_BUTTON, self.encode)
-        self.nb_log.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.nb_switched)
+        self.nb_log.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.log_switched)
 
         # Bind dnd
         dt = FileDropTarget(self.list_sources)
         self.list_sources.SetDropTarget(dt)
     
-    def encode(self, event):  
-        notify("Encoding is not implemetnted yet")
+    def encode(self, event): 
+        if self.list_sources.GetItemCount() > 0:
+            encode_list = []
+            # list selected
+            source_item = self.list_sources.GetFirstSelected()
+            if source_item != wx.NOT_FOUND:
+                while source_item != wx.NOT_FOUND:
+                    encode_list.append([self.list_sources.GetItemText(source_item, 0), self.list_sources.GetItemText(source_item, 1)])
+                    source_item = self.list_sources.GetNextSelected(source_item)
+                
+                self.flog(text=f'Encoding {len(encode_list)} selected sources...')
+            else:
+                # no selection gets all items
+                for list_item in range(self.list_sources.GetItemCount()):
+                    encode_list.append([self.list_sources.GetItemText(source_item, 0), self.list_sources.GetItemText(source_item, 1)])
+                
+                self.flog(text=f'No sources selected. Encoding all {len(encode_list)} sources...')
+            
+            for id, item in encode_list:
+                self.flog(id, text=f'Encoding...')
+                #page = self.nb_log.FindPage(tab['panel'])
+                #self.nb_log.SetSelection(page)
+
+        else:
+            self.flog(error=f'No sources added.', color=wx.RED)
+        
+
+
+        notify("Encoding finished")
 
     def file_selected(self, event):
         item_file = self.list_sources.GetFirstSelected()
@@ -602,7 +694,7 @@ class MyMainFrame(wx.Frame):
     def ap_selected(self, event):
         preset_item = self.list_ap.GetSelection()
         if preset_item != wx.NOT_FOUND:
-            self.audio_preset = AudioPresets.GetPresetByIndex(preset_item)
+            self.audio_preset = AudioPresets.ByIndex(preset_item)
             print('selected apreset index=', self.audio_preset.index, 'name=', self.audio_preset.name, 'encoder=', self.audio_preset.encoder.name)
             self.audio_prop_show()
         else:
@@ -610,14 +702,14 @@ class MyMainFrame(wx.Frame):
         pass
 
     def vp_activated(self, event):
-        file_item = self.list_sources.GetFirstSelected()
+        source_item = self.list_sources.GetFirstSelected()
         if self.video_preset is not None:
-            if file_item != wx.NOT_FOUND:
-                while file_item != wx.NOT_FOUND:
-                    file_name = self.list_sources.GetItemText(file_item, 1)
+            if source_item != wx.NOT_FOUND:
+                while source_item != wx.NOT_FOUND:
+                    file_name = self.list_sources.GetItemText(source_item, 1)
                     MediaFiles.SetVideo(file_name, self.video_preset)
-                    self.list_sources.SetItem(file_item, 3, self.video_preset.name)
-                    file_item = self.list_sources.GetNextSelected(file_item)
+                    self.list_sources.SetItem(source_item, 3, self.video_preset.name)
+                    source_item = self.list_sources.GetNextSelected(source_item)
             else:
                 self.video_prop_show(True)
         else:
@@ -640,20 +732,18 @@ class MyMainFrame(wx.Frame):
         self.pg_vp.Clear()
         if self.video_preset.system is False:
             # Main part
-            self.vp_page = self.pg_vp.AddPage("Video Settings")
-            self.vp_page.Append(wxpg.PropertyCategory("Video Preset"))
-            self.vp_page.Append(wxpg.StringProperty("Name", wxpg.PG_LABEL, self.video_preset.name))
-            self.vp_page.Append(wxpg.PropertyCategory("Codec"))
-            list_encoders = Encoders.GetEncoderNames(MediaType.VIDEO)
-            self.vp_page.Append(wxpg.EditEnumProperty("Encoder", wxpg.PG_LABEL, list_encoders, range(len(list_encoders)), value=self.video_preset.encoder.name))
-            self.vp_page.Append(wxpg.PropertyCategory("Container"))
-            self.vp_page.Append(wxpg.EditEnumProperty("Format", wxpg.PG_LABEL, self.video_preset.encoder.formats, range(len(self.video_preset.encoder.formats)), value=self.video_preset.encoder_default_format))
-            
-            # Encoder options
-            self.vp_page.Append(wxpg.PropertyCategory("Encoder options"))
-            self.prop_encoder_options_build(self.video_preset, self.vp_page)
-            
-            # data and transform options !TODO!
+            self.vp_page: pg.PropertyGridPage = self.pg_vp.AddPage("Video Settings")
+            self.vp_page.Append(pg.PropertyCategory("Video Preset"))
+            p: pg.PGProperty = self.vp_page.Append(pg.StringProperty("Name", pg.PG_LABEL, self.video_preset.name))
+            p.SetHelpString('Video preset name')
+            self.vp_page.Append(pg.PropertyCategory("Codec"))
+            list_encoders = Encoders.Names(MediaType.VIDEO)
+            p = self.vp_page.Append(pg.EditEnumProperty("Encoder", pg.PG_LABEL, list_encoders, range(len(list_encoders)), value=self.video_preset.encoder.name))
+            p.SetHelpString('Video encoder name')
+            self.vp_page.Append(pg.PropertyCategory("Container"))
+            p = self.vp_page.Append(pg.EditEnumProperty("Format", pg.PG_LABEL, self.video_preset.encoder.formats, range(len(self.video_preset.encoder.formats)), value=self.video_preset.default_format))
+            p.SetHelpString('File format')
+            self.prop_encoder_options_build(self.video_preset)
             if switch: self.nb_video.ChangeSelection(1)
 
     def audio_prop_show(self, switch: bool=False):
@@ -661,59 +751,64 @@ class MyMainFrame(wx.Frame):
         self.pg_ap.Clear()
         if self.audio_preset.system is False:
             # Main part
-            self.ap_page = self.pg_ap.AddPage("Audio Settings")
-            self.ap_page.Append(wxpg.PropertyCategory("Audio Preset"))
-            self.ap_page.Append(wxpg.StringProperty("Name", wxpg.PG_LABEL, self.audio_preset.name))
-            self.ap_page.Append(wxpg.PropertyCategory("Codec"))
-            list_encoders = Encoders.GetEncoderNames(MediaType.AUDIO)
-            self.ap_page.Append(wxpg.EditEnumProperty("Encoder", wxpg.PG_LABEL, list_encoders, range(len(list_encoders)), value=self.audio_preset.encoder.name))
-            self.ap_page.Append(wxpg.PropertyCategory("Container"))
-            self.ap_page.Append(wxpg.EditEnumProperty("Format", wxpg.PG_LABEL, self.audio_preset.encoder.formats, range(len(self.audio_preset.encoder.formats)), value=self.audio_preset.encoder_default_format))
-            
-            # Encoder options
-            self.ap_page.Append(wxpg.PropertyCategory("Encoder options"))
-            self.prop_encoder_options_build(self.audio_preset, self.ap_page)
-
-            # data and transform options
-            self.ap_page.Append(wxpg.PropertyCategory('Transofrm'))
-            volume_prop = wxpg.IntProperty("Volume", wxpg.PG_LABEL, 100)
-            volume_prop.SetEditor(wxpg.PGEditor_SpinCtrl)
-            self.ap_page.Append(volume_prop)
-            
+            self.ap_page: pg.PropertyGridPage = self.pg_ap.AddPage("Audio Settings")
+            self.ap_page.Append(pg.PropertyCategory("Audio Preset"))
+            p: pg.PGProperty = self.ap_page.Append(pg.StringProperty("Name", pg.PG_LABEL, self.audio_preset.name))
+            p.SetHelpString('Audio preset name')
+            self.ap_page.Append(pg.PropertyCategory("Codec"))
+            list_encoders = Encoders.Names(MediaType.AUDIO)
+            p = self.ap_page.Append(pg.EditEnumProperty("Encoder", pg.PG_LABEL, list_encoders, range(len(list_encoders)), value=self.audio_preset.encoder.name))
+            p.SetHelpString('Audio encoder name')
+            self.ap_page.Append(pg.PropertyCategory("Container"))
+            p = self.ap_page.Append(pg.EditEnumProperty("Format", pg.PG_LABEL, self.audio_preset.encoder.formats, range(len(self.audio_preset.encoder.formats)), value=self.audio_preset.default_format))
+            p.SetHelpString('Audio only file format')
+            self.prop_encoder_options_build(self.audio_preset)
             if switch: self.nb_audio.ChangeSelection(1)      
 
-    def prop_encoder_options_build(self, preset: VideoPresets | AudioPresets, wxprop_page):        
-            for optionkey, optionval in preset.encoder_options.items():
-                #print('adding op:', optionkey)
-                if optionval['fixed']:
-                    enum_prop = wxpg.EnumProperty
-                    # Enum prop restricted case, and wxpg requires int default value
-                    if type(optionval['values'][0]) != dict:
-                        current = optionval['values'].index(optionval['current'])
-                    else:
-                        for i, x in enumerate(optionval['values']):
-                            if x['name'] == optionval['current']:
-                                current = i
-                                break
+    def prop_encoder_options_build(self, preset: VideoPresets | AudioPresets):
+        if preset.encoder.type == MediaType.AUDIO:
+            this_page = self.ap_page
+        elif preset.encoder.type == MediaType.VIDEO:
+            this_page = self.vp_page
+
+        for optionkey, optionval in preset.encoder_options.items():
+            print('adding op:', optionkey)
+            if type(optionval) == bool:
+                if optionval: this_page.Append(pg.PropertyCategory(optionkey))
+                enum_prop = None
+            elif optionval['fixed']:
+                enum_prop = pg.EnumProperty
+                # Enum prop restricted case, and wxpg requires int default value
+                if type(optionval['values'][0]) != dict:
+                    current = optionval['values'].index(optionval['current'])
                 else:
-                    # Enum prop editable case, and wxpg requires str default value
-                    enum_prop = wxpg.EditEnumProperty
-                    current = optionval['current']
-                
+                    for i, x in enumerate(optionval['values']):
+                        if x['name'] == optionval['current']:
+                            current = i
+                            break
+            else:
+                # Enum prop editable case, and wxpg requires str default value
+                enum_prop = pg.EditEnumProperty
+                current = optionval['current']
+            
+            if enum_prop is not None:
                 if type(optionval['values'][0]) == dict: # if elements are dicts get the list of name keys
                     opt_values = [x['name'] for x in optionval['values']]
-                    p = wxprop_page.Append(enum_prop(optionkey, wxpg.PG_LABEL, opt_values, range(len(opt_values)), value=current))
+                    p = this_page.Append(enum_prop(optionkey, pg.PG_LABEL, opt_values, range(len(opt_values)), value=current))
                     p.SetHelpString(optionval['doc'])
+                    print(optionkey, 'added')
                     if optionval['values'][current].get('suboptions', None) is not None: 
+                        print(optionkey, 'has subops')
                         print('theres subs in', optionval['values'][current]['name'])
                         for suboption in optionval['values'][current]['suboptions']:
-                            p: wxpg.PGProperty = wxprop_page.Append(wxpg.EditEnumProperty(suboption['name'], wxpg.PG_LABEL, suboption['values'], range(len(suboption['values'])), value=suboption['current']))
+                            p: pg.PGProperty = this_page.Append(pg.EditEnumProperty(suboption['name'], pg.PG_LABEL, suboption['values'], range(len(suboption['values'])), value=suboption['current']))
                             p.SetHelpString(suboption['doc'])
                 else: # list type
-                    p: wxpg.PGProperty = wxprop_page.Append(enum_prop(optionkey, wxpg.PG_LABEL, optionval['values'], range(len(optionval['values'])), value=current))
+                    p: pg.PGProperty = this_page.Append(enum_prop(optionkey, pg.PG_LABEL, optionval['values'], range(len(optionval['values'])), value=current))
                     p.SetHelpString(optionval['doc'])
+                    print(optionkey, 'added')
 
-    def pg_vp_changed(self, event: wxpg.PropertyGridEvent):
+    def pg_vp_changed(self, event: pg.PropertyGridEvent):
         print('video prop changed item:', event.PropertyName, 'to value:', event.Value)
         val_int = type(event.Value) == int
         if event.PropertyName == 'Name':
@@ -721,14 +816,14 @@ class MyMainFrame(wx.Frame):
                 self.video_preset.name = event.Value
         elif event.PropertyName == 'Encoder':
             # encoder option
-            list_encoders = Encoders.GetEncoderNames(MediaType.VIDEO)
+            list_encoders = Encoders.Names(MediaType.VIDEO)
             val = list_encoders[event.Value] if val_int else event.Value
-            self.video_preset = self.video_preset.SetVideoEncoder(Encoders.GetEncoderByName(val))
+            self.video_preset = self.video_preset.SetVideoEncoder(Encoders.ByName(val))
         elif event.PropertyName == 'Format':
             # format option
             val = self.video_preset.encoder.formats[event.Value] if val_int else event.Value
-            self.video_preset.encoder_default_format = val
-        elif event.PropertyName in ['Color coding', 'Preset', 'Tune', 'Profile', 'Lookahead']:
+            self.video_preset.default_format = val
+        elif event.PropertyName in ['Color coding', 'Preset', 'Tune', 'Profile', 'Lookahead', 'Scale', 'Scale algo']:
             # top level options
             val = self.video_preset.encoder_options[event.PropertyName]['values'][event.Value] if val_int else event.Value
             self.video_preset.encoder_options[event.PropertyName].update({'current': val})
@@ -738,7 +833,7 @@ class MyMainFrame(wx.Frame):
             val = opt_values[event.Value] if val_int else event.Value
             self.video_preset.encoder_options[event.PropertyName].update({'current': val})
         elif event.PropertyName in ['Quality', 'Max quality', 'Bitrate']:
-            # suboptions 
+            # suboptions of Rate Control
             branch = self.video_preset.encoder_options['Rate control']
             index = self.video_preset.GetValueIndex(branch['values'], branch['current'])
             branch = self.video_preset.encoder_options['Rate control']['values'][index]['suboptions']
@@ -747,7 +842,7 @@ class MyMainFrame(wx.Frame):
             self.video_preset.encoder_options['Rate control']['values'][index]['suboptions'][subindex].update({'current': val})
         self.video_prop_show()
 
-    def pg_ap_changed(self, event: wxpg.PropertyGridEvent):
+    def pg_ap_changed(self, event: pg.PropertyGridEvent):
         print('audio prop changed item:', event.PropertyName, 'to value:', event.Value)
         val_int = type(event.Value) == int
         if event.PropertyName == 'Name':
@@ -755,24 +850,24 @@ class MyMainFrame(wx.Frame):
                 self.audio_preset.name = event.Value
         elif event.PropertyName == 'Encoder':
             # encoder option
-            list_encoders = Encoders.GetEncoderNames(MediaType.AUDIO)
+            list_encoders = Encoders.Names(MediaType.AUDIO)
             val = list_encoders[event.Value] if val_int else event.Value
-            self.audio_preset = self.audio_preset.SetAudioEncoder(Encoders.GetEncoderByName(val))
+            self.audio_preset = self.audio_preset.SetAudioEncoder(Encoders.ByName(val))
         elif event.PropertyName == 'Format':
             # format option
             val = self.audio_preset.encoder.formats[event.Value] if val_int else event.Value
-            self.audio_preset.encoder_default_format = val
-        elif event.PropertyName in ['Color coding', 'Preset', 'Tune', 'Profile', 'Lookahead']:
+            self.audio_preset.default_format = val
+        elif event.PropertyName in ['Color coding', 'Preset', 'Tune', 'Profile', 'Lookahead', 'Volume']:
             # top level options
             val = self.audio_preset.encoder_options[event.PropertyName]['values'][event.Value] if val_int else event.Value
             self.audio_preset.encoder_options[event.PropertyName].update({'current': val})
-        elif event.PropertyName == 'Rate control':
+        elif event.PropertyName in ['Rate control']:
             # options with suboptions
             opt_values = [x['name'] for x in self.audio_preset.encoder_options[event.PropertyName]['values']]
             val = opt_values[event.Value] if val_int else event.Value
             self.audio_preset.encoder_options[event.PropertyName].update({'current': val})
         elif event.PropertyName in ['Quality', 'Max quality', 'Bitrate']:
-            # suboptions 
+            # suboptions of Rate Control
             branch = self.audio_preset.encoder_options['Rate control']
             index = self.audio_preset.GetValueIndex(branch['values'], branch['current'])
             branch = self.audio_preset.encoder_options['Rate control']['values'][index]['suboptions']
@@ -800,16 +895,17 @@ class MyMainFrame(wx.Frame):
         self.flog(0, 'Pretending to delete audio preset')
 
     def log_add(self, title: str, media: MediaFiles) -> dict:
-        tab = {}
+        tab: dict[str, wx.Panel|wx.BoxSizer|rt.RichTextCtrl] = {} # {'panel':,'sizer':,'text':}
         tab['panel'] = wx.Panel(self.nb_log, wx.ID_ANY)
         self.nb_log.AddPage(tab['panel'], select=True, text=title)
-
         tab['sizer'] = wx.BoxSizer(wx.HORIZONTAL)
-
-        tab['text'] = wx.TextCtrl(tab['panel'], wx.ID_ANY, '', style=wx.BORDER_NONE | wx.HSCROLL | wx.TE_AUTO_URL | wx.TE_BESTWRAP | wx.TE_MULTILINE | wx.TE_NOHIDESEL | wx.TE_READONLY | wx.TE_RICH2)
+        tab['text'] = rt.RichTextCtrl(
+            parent=tab['panel'],
+            id=wx.ID_ANY,
+            #value=f'{title} log',
+            style=wx.BORDER_NONE | wx.HSCROLL | wx.TE_AUTO_URL | rt.RE_MULTILINE | rt.RE_READONLY) #| wx.TE_RICH2
         tab['text'].SetBackgroundColour(wx.Colour(208, 208, 208))
         tab['sizer'].Add(tab['text'], 1, wx.ALL | wx.EXPAND, 3)
-
         tab['panel'].SetSizer(tab['sizer'])
         tab['panel'].Layout()
         page = self.nb_log.FindPage(tab['panel'])
@@ -822,7 +918,7 @@ class MyMainFrame(wx.Frame):
         pn = self.nb_log.FindPage(tab['panel'])
         self.nb_log.DeletePage(pn) 
 
-    def nb_switched(self, event):
+    def log_switched(self, event):
         selected = self.nb_log.GetSelection()
         if selected != wx.NOT_FOUND:
             if selected == 0:
@@ -869,16 +965,35 @@ class MyMainFrame(wx.Frame):
         else:
             return property_value
 
-    def flog(self, tab: dict=None, text: str=''):
+    def flog(self, tab: dict=None, **kwargs): # kw = {'text', 'file', 'error', 'end'}
         if tab is None: tab = self.flog_tab
-        timestamp = dt.datetime.strftime(dt.datetime.now(), '%H:%M:%S')
-        if tab['text'].GetValue() != '':
-            tab['text'].AppendText(f'\n{timestamp}: {text}')
-        else:
-            tab['text'].SetValue(f'{timestamp}: {text}')
+        timestamp = dt.datetime.strftime(dt.datetime.now(), '%H:%M:%S ')
+        logtxt: rt.RichTextCtrl = tab['text']
+        logtxt.MoveEnd()
+        logtxt.WriteText(timestamp)
+        if kwargs.get('text') is not None:
+            logtxt.BeginTextColour(FFColor.TEXT.wx)
+            logtxt.WriteText(f'{kwargs['text']} ')
+            logtxt.EndTextColour()
+        if kwargs.get('file') is not None:
+            logtxt.BeginTextColour(FFColor.FILE.wx)
+            logtxt.WriteText(f'{kwargs['file']} ')
+            logtxt.EndTextColour()
+        if kwargs.get('error') is not None:
+            logtxt.BeginTextColour(FFColor.ERR.wx)
+            logtxt.WriteText(f'{kwargs['error']} ')
+            logtxt.EndTextColour()
+        if kwargs.get('end') is not None:
+            logtxt.BeginTextColour(FFColor.TEXT.wx)
+            logtxt.WriteText(kwargs['end'])
+            logtxt.EndTextColour()
+        logtxt.MoveEnd()
+        logtxt.ScrollIntoView(logtxt.GetCaretPosition(), wx.WXK_DOWN)
+        logtxt.Newline()
+        #self.nb_log.SetSelection(tab)
 
 class MyApp(wx.App):
-    ver = 'FFEnc v0.095a'
+    ver = 'FFEnc v0.096a'
     def OnInit(self):
         self.frame = MyMainFrame(None, wx.ID_ANY, "")
         self.SetTopWindow(self.frame)
@@ -977,10 +1092,10 @@ class Filter():
 def notify(text: str):
     feicon = wx.NullIcon
     feicon.CopyFromBitmap(wx.Bitmap("ffenc.png", wx.BITMAP_TYPE_ANY))
-    notif = wxadv.NotificationMessage(MyApp.ver, message=text, parent=None)
-    wxadv.NotificationMessage.SetTitle(notif, MyApp.ver)
-    wxadv.NotificationMessage.SetIcon(notif, feicon)
-    wxadv.NotificationMessage.Show(notif, timeout=8)    
+    notif = adv.NotificationMessage(MyApp.ver, message=text, parent=None)
+    adv.NotificationMessage.SetTitle(notif, MyApp.ver)
+    adv.NotificationMessage.SetIcon(notif, feicon)
+    adv.NotificationMessage.Show(notif, timeout=8)    
 
 def has_tags(text: str, tag_list: list) -> bool:
     return any(item in text for item in tag_list)
@@ -995,429 +1110,494 @@ if __name__ == "__main__":
     ffmpeg = FFmpeg('C:\\Program Files\\ffmpeg\\bin\\')
 
     # Add codecs
-    # 0: No video
-    Encoders.Add(
-        name=         'No video',
-        type=         MediaType.VIDEO,
-        system=       True,
-        options=      {'ffoption': None}
-    )
-    
-    # 1: Video stream copy
-    Encoders.Add(
-        name=         'Video stream copy',
-        type=         MediaType.VIDEO,
-        system=       True,
-        options=      {'ffoption': '-c:v copy'}
-    )    
-
-    # 2: No audio 
-    Encoders.Add(
-        name=         'No audio',
-        type=         MediaType.AUDIO,
-        system=       True,
-        options=      {'ffoption': None}
-    )
-    
-    # 3: Audio stream copy
-    Encoders.Add(
-        name=         'Audio stream copy',
-        type=         MediaType.AUDIO,
-        system=       True,
-        options=      {'ffoption': '-c:a copy'}
-    )     
-   
-    # 4: Nearly default libx264 mp4
-    Encoders.Add(
-        name=         'libx264',
-        type=         MediaType.VIDEO,
-        system=       False,
-        general=      ['dr1', 'delay', 'threads'],
-        threading=    ['other'],
-        formats=      ['mp4', 'mov'],
-        audio_codecs= ['aac', 'ac3', 'mp3', 'dts', 'mp2', 'alac', 'dvaudio'],
-        options=      {
-            'Color coding': {
-                'ffoption': '-pix_fmt',
-                'values': ['yuv420p', 'yuvj420p', 'yuv422p', 'yuvj422p', 'yuv444p', 'yuvj444p', 'yuv420p10le', 'yuv422p10le', 'yuv444p10le', 'gray', 'gray10le'],
-                'current': 'yuv420p',
-                'doc': 'Pixel format mode. 10 an 16 in the names state the bitdepth.',
-                'fixed': True
-            },
-            'Preset': {
-                'ffoption': '-preset',
-                'values': ['medium', 'ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'slow', 'veryslow', 'placebo'],
-                'current': 'slow',
-                'doc': 'Sets the encoding preset.',
-                'fixed': False,
-            },
-            'Rate control': {
-                'values': [
-                    {
-                        'name': 'Constant quality',
-                        'ffoption': '-crf',
-                        'doc': 'Constant quality mode.',
-                        'suboptions': [
-                            {
-                            'name': 'Quality',
-                            'values': ['-1', '0', '5', '10', '20', '25', '30', '40', '50'],
-                            'current': '-1',
-                            'doc': 'Selects the quality for constant quality mode.',
-                            'fixed': False,
-                            },
-                            {
-                            'name': 'Max quality',
-                            'values': ['-1', '0', '5', '10', '20', '25', '30', '40', '50'],
-                            'current': '-1',
-                            'doc': 'Prevents VBV from lowering quality beyond this point.',
-                            'fixed': False,
-                            },
-                        ],
-                    },
-                    {
-                        'name':'Constant quantization',
-                        'ffoption': '-qp',
-                        'doc': 'Constant quantization mode.',
-                        'suboptions': [ 
-                            {
-                            'name': 'Quality',
-                            'values': ['-1', '5', '10', '20', '25', '30', '40', '51'],
-                            'current': '25',
-                            'doc': 'Constant quantization parameter',
-                            'fixed': False,
-                            },
-                        ],
-                    },
-                    {
-                        'name': 'AQ mode',
-                        'ffoption': '-aq-mode',
-                        'doc': 'AQ mode',
-                        'suboptions': [
-                            {
-                            'name': 'AQ method',
-                            'values': ['-1', '0', '1', '2', '3'],
-                            'current': '-1',
-                            'doc': 'AQ method number',
-                            'fixed': True,
-                            },
-                            {
-                            'name': 'AQ strength',
-                            'values': ['-1', '0', '10', '20', '50', '100', '500'],
-                            'current': '-1',
-                            'doc': 'Reduces blocking and blurring in flat and textured areas.',
-                            'fixed': False,
-                            },
-                        ],
-                    },
-                ],
-                'current': 'Constant quality',
-                'doc': 'Rate control mode',
-                'fixed': True,
-            },
-            'Tune': {
-                'ffoption': '-tune',
-                'values': ['film', 'grain', 'animation', 'zerolatency', 'fastdecode', 'stillimage'],
-                'current': 'film', 
-                'doc': 'Tune the encoding params.',
-                'fixed': True,
-            },
-            'Lookahead': {
-                'ffoption': '-rc-lookahead',
-                'values': ['-1', '5', '10', '25', '30', '50', '100'],
-                'current': '25',
-                'doc': 'Number of frames to look ahead for frametype and ratecontrol.',
-                'fixed': False,
-            },
-        }
-    )
-    
-    # 5: Nearly default nv_enc264 mp4
-    Encoders.Add(
-        name=         'h264_nvenc',
-        type=         MediaType.VIDEO,
-        system=       False,
-        general=      ['dr1', 'delay', 'hardware'],
-        threading=    ['none'],
-        formats=      ['mp4', 'mov'],
-        audio_codecs= ['aac', 'ac3', 'mp3', 'dts', 'mp2', 'alac', 'dvaudio'],
-        devices=      ['cuda', 'd3d11va'],
-        options=
-        {
-            'Color coding': {
-                'ffoption': '-pix_fmt',
-                'values': ['yuv420p', 'yuv444p', 'yuv444p16le', 'p010le', 'p016le', 'bgr0', 'bgra', 'rgb0', 'rgba'],
-                'current': 'yuv420p',
-                'doc': 'Pixel format mode. 10 an 16 in the names state the bitdepth.',
-                'fixed': False,
-            },
-            'Preset': {
-                'ffoption': '-preset',
-                'values': ['p1', 'p2', 'p3 ', 'p4', 'p5', 'p6', 'p7'],
-                'current': 'p6',
-                'doc': 'Encoding preset',
-                'fixed': False,
-            },
-            'Rate control': {
-                'values': [
-                    {
-                        'name': 'Auto by preset',
-                        'ffoption': '-rc -1',
-                        'doc': 'Rate/quality controlled by the Preset',
-                    },
-                    {
-                        'name': 'Constant QP mode',
-                        'ffoption': '-rc constqp',
-                        'suboptions': [
-                            {
-                            'name': 'Quality',
+    set_encoders = [
+        {   #0
+            'name':            'No video',
+            'type':            MediaType.VIDEO,
+            'system':          True,
+            'options':         {
+                'ffoption': None
+            }
+        },
+        {   #1
+            'name':            'Video stream copy',
+            'type':            MediaType.VIDEO,
+            'system':          True,
+            'options':         {
+                'ffoption': '-c:v copy'
+            }
+        },
+        {   #2
+            'name':            'No audio',
+            'type':            MediaType.AUDIO,
+            'system':          True,
+            'options':         {
+                'ffoption': None
+            }
+        },
+        {   #3
+            'name':            'Audio stream copy',
+            'type':            MediaType.AUDIO,
+            'system':          True,
+            'options':         {
+                'ffoption': '-c:a copy'
+            }
+        },
+        {   #4
+            'name':            'libx264',
+            'type':            MediaType.VIDEO, 'system': False,
+            'general':         ['dr1', 'delay', 'threads'],
+            'threading':       ['other'],
+            'formats':         ['mp4', 'mov'],
+            'audio_codecs':    ['aac', 'ac3', 'mp3', 'dts', 'mp2', 'alac', 'dvaudio'],
+            'options':         {
+                'Encoder options': True,
+                'Color coding': {
+                    'ffoption': '-pix_fmt',
+                    'values': ['yuv420p', 'yuvj420p', 'yuv422p', 'yuvj422p', 'yuv444p', 'yuvj444p', 'yuv420p10le', 'yuv422p10le', 'yuv444p10le', 'gray', 'gray10le'],
+                    'current': 'yuv420p',
+                    'doc': 'Pixel format/chroma subsampling mode. 10 or 16 in the names states the bitdepth.',
+                    'fixed': True
+                },
+                'Preset': {
+                    'ffoption': '-preset',
+                    'values': ['medium', 'ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'slow', 'veryslow', 'placebo'],
+                    'current': 'slow',
+                    'doc': 'Sets the encoding preset.',
+                    'fixed': False,
+                },
+                'Profile': {
+                    'ffoption': '-profile',
+                    'values': ['baseline', 'main', 'high', 'high10', 'high422', 'high444'],
+                    'current': 'high',
+                    'doc': 'Encoding profile. High10, high422 and high444 modes support 10-bit color.',
+                    'fixed': True,
+                },
+                'Encoder rate control': True,
+                'Rate control': {
+                    'values': [
+                        {
+                            'name': 'Constant quality',
+                            'ffoption': '-crf',
+                            'doc': 'Constant quality mode.',
+                            'suboptions': [
+                                {
+                                'name': 'Quality',
+                                'values': ['-1', '0', '5', '10', '20', '25', '30', '40', '50'],
+                                'current': '-1',
+                                'doc': 'Selects the quality for constant quality mode.',
+                                'fixed': False,
+                                },
+                                {
+                                'name': 'Max quality',
+                                'values': ['-1', '0', '5', '10', '20', '25', '30', '40', '50'],
+                                'current': '-1',
+                                'doc': 'Prevents VBV from lowering quality beyond this point.',
+                                'fixed': False,
+                                },
+                            ],
+                        },
+                        {
+                            'name':'Constant quantization',
                             'ffoption': '-qp',
-                            'values': ['-1', '0', '5', '10', '20', '25', '30', '40', '51'],
-                            'current': '0',
-                            'doc': 'Constant QP mode',
-                            'fixed': False,
-                            },
-                        ],
-                    },
-                    {
-                        'name': 'Variable bitrate',
-                        'ffoption': '-rc vbr',
-                        'suboptions': [
-                            {
-                            'name':'Quality',
-                            'ffoption': '-cq',
-                            'values': ['0', '5', '10', '20', '25', '30', '40', '51'],
-                            'current': '0',
-                            'doc': 'Variable bitrate mode',
-                            'fixed': False,
-                            },
-                        ],
-                    },
-                    {
-                        'name': 'Constant bitrate',
-                        'ffoption': '-rc cbr',
-                        'suboptions': [
-                            {
-                            'name': 'Bitrate', 
-                            'ffoption': '-v:b',
-                            'values': ['256k', '512k', '1M', '2M', '4M', '8M', '12M', '20M', '30M', '40M'],
-                            'current': '8M',
-                            'doc': 'Constant bitrate mode',
-                            'fixed': False,
-                            },
-                        ],
-                    },
-                    {
-                        'name': 'Constant bitrate low delay HQ',
-                        'ffoption': '-rc cbr_ld_hq',
-                        'suboptions': [
-                            {
-                            'name': 'Bitrate', 
-                            'ffoption': '-v:b',
-                            'values': ['256k', '512k', '1M', '2M', '4M', '8M', '12M', '20M', '30M', '40M'],
-                            'current': '8M',
-                            'doc': 'Constant bitrate low delay high quality',
-                            'fixed': False,
-                            },
-                        ],
-                    },
-                    {
-                        'name': 'Constant bitrate HQ',
-                        'ffoption': '-rc cbr_hq',
-                        'suboptions': [
-                            {
-                            'name': 'Bitrate', 
-                            'ffoption': '-v:b',
-                            'values': ['256k', '512k', '1M', '2M', '4M', '8M', '12M', '20M', '30M', '40M'],
-                            'current': '8M',
-                            'doc': 'Constant bitrate high quality mode',
-                            'fixed': False,
-                            },
-                        ],
-                    },
-                    {
-                        'name': 'Variable bitrate HQ',
-                        'ffoption': '-rc vbr_hq',
-                        'suboptions': [
-                            {
-                            'name':'Quality',
-                            'ffoption': '-cq',
-                            'values': ['0', '5', '10', '20', '25', '30', '40', '51'],
-                            'current': '0',
-                            'doc': 'Variable bitrate high quality',
-                            'fixed': False,
-                            },
-                        ],
-                    },
-                ],
-                'current': 'Auto by preset',
-                'doc': 'Overrides the preset rate-control',
-                'fixed': True,
-            },
-            'Tune': {
-                'ffoption': '-tune',
-                'values': ['hq', 'll', 'ull', 'lossless'],
-                'current': 'hq',
-                'doc': 'Sets the encoding tuning info',
-                'fixed': True,
-            },
-            'Profile': {
-                'ffoption': '-profile',
-                'values': ['baseline', 'main', 'high', 'high444p'],
-                'current': 'main',
-                'doc': 'Sets the encoding profile',
-                'fixed': True,
-            },
-            'Lookahead': {
-                'ffoption': '-rc-lookahead',
-                'values': ['-1', '5', '10', '25', '30', '50', '100'],
-                'current': '25',
-                'doc': 'Number of frames to look ahead for rate-control',
-                'fixed': False,
-            },
-        }
-    )
-    
-    # 6: aac default
-    Encoders.Add(
-        name=           'aac',
-        type=           MediaType.AUDIO,
-        system=         False,
-        general=        ['dr1', 'delay', 'small'],
-        threading=      ['none'],
-        formats=        ['aac', 'mp4'],
-        sample_rates=   [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350],
-        channel_layouts=[],
-        sample_formats= ['fltp'],
-        options=
+                            'doc': 'Constant quantization mode.',
+                            'suboptions': [ 
+                                {
+                                'name': 'Quality',
+                                'values': ['-1', '5', '10', '20', '25', '30', '40', '51'],
+                                'current': '25',
+                                'doc': 'Constant quantization parameter',
+                                'fixed': False,
+                                },
+                            ],
+                        },
+                        {
+                            'name': 'AQ mode',
+                            'ffoption': '-aq-mode',
+                            'doc': 'AQ mode',
+                            'suboptions': [
+                                {
+                                'name': 'AQ method',
+                                'values': ['-1', '0', '1', '2', '3'],
+                                'current': '-1',
+                                'doc': 'AQ method number',
+                                'fixed': True,
+                                },
+                                {
+                                'name': 'AQ strength',
+                                'values': ['-1', '0', '10', '20', '50', '100', '500'],
+                                'current': '-1',
+                                'doc': 'Reduces blocking and blurring in flat and textured areas.',
+                                'fixed': False,
+                                },
+                            ],
+                        },
+                    ],
+                    'current': 'Constant quality',
+                    'doc': 'Rate control mode',
+                    'fixed': True,
+                },
+                'Encoder tune': True,
+                'Tune': {
+                    'ffoption': '-tune',
+                    'values': ['film', 'grain', 'animation', 'zerolatency', 'fastdecode', 'stillimage'],
+                    'current': 'film', 
+                    'doc': 'Tune the encoding params.',
+                    'fixed': True,
+                },
+                'Lookahead': {
+                    'ffoption': '-rc-lookahead',
+                    'values': ['-1', '5', '10', '25', '30', '50', '100'],
+                    'current': '25',
+                    'doc': 'Number of frames to look ahead for frametype and ratecontrol.',
+                    'fixed': False,
+                },
+            }
+        },
+        {   #5
+            'name':            'h264_nvenc',
+            'type':            MediaType.VIDEO,
+            'system':          False,
+            'general':         ['dr1', 'delay', 'hardware'],
+            'threading':       ['none'],
+            'formats':         ['mp4', 'mov'],
+            'audio_codecs':    ['aac', 'ac3', 'mp3', 'dts', 'mp2', 'alac', 'dvaudio'],
+            'devices':         ['cuda', 'd3d11va'],
+            'options':         {
+                'Encoder options': True,
+                'Color coding': {
+                    'ffoption': '-pix_fmt',
+                    'values': ['yuv420p', 'yuv444p', 'yuv444p16le', 'p010le', 'p016le', 'bgr0', 'bgra', 'rgb0', 'rgba'],
+                    'current': 'yuv420p',
+                    'doc': 'Pixel format/chroma subsampling mode. 10 or 16 in the names states the bitdepth.',
+                    'fixed': False,
+                },
+                'Preset': {
+                    'ffoption': '-preset',
+                    'values': ['p1', 'p2', 'p3 ', 'p4', 'p5', 'p6', 'p7'],
+                    'current': 'p6',
+                    'doc': 'Encoding preset',
+                    'fixed': False,
+                },
+                'Profile': {
+                    'ffoption': '-profile',
+                    'values': ['baseline', 'main', 'high', 'high444p'],
+                    'current': 'high',
+                    'doc': 'Encoding profile',
+                    'fixed': True,
+                },
+                'Encoder rate control': True,
+                'Rate control': {
+                    'values': [
+                        {
+                            'name': 'Auto by preset',
+                            'ffoption': '-rc -1',
+                            'doc': 'Rate/quality controlled by the Preset',
+                        },
+                        {
+                            'name': 'Constant QP mode',
+                            'ffoption': '-rc constqp',
+                            'suboptions': [
+                                {
+                                'name': 'Quality',
+                                'ffoption': '-qp',
+                                'values': ['-1', '0', '5', '10', '20', '25', '30', '40', '51'],
+                                'current': '0',
+                                'doc': 'Constant QP mode',
+                                'fixed': False,
+                                },
+                            ],
+                        },
+                        {
+                            'name': 'Variable bitrate',
+                            'ffoption': '-rc vbr',
+                            'suboptions': [
+                                {
+                                'name':'Quality',
+                                'ffoption': '-cq',
+                                'values': ['0', '5', '10', '20', '25', '30', '40', '51'],
+                                'current': '0',
+                                'doc': 'Variable bitrate mode',
+                                'fixed': False,
+                                },
+                            ],
+                        },
+                        {
+                            'name': 'Constant bitrate',
+                            'ffoption': '-rc cbr',
+                            'suboptions': [
+                                {
+                                'name': 'Bitrate', 
+                                'ffoption': '-v:b',
+                                'values': ['256k', '512k', '1M', '2M', '4M', '8M', '12M', '20M', '30M', '40M'],
+                                'current': '8M',
+                                'doc': 'Constant bitrate mode',
+                                'fixed': False,
+                                },
+                            ],
+                        },
+                        {
+                            'name': 'Constant bitrate low delay HQ',
+                            'ffoption': '-rc cbr_ld_hq',
+                            'suboptions': [
+                                {
+                                'name': 'Bitrate', 
+                                'ffoption': '-v:b',
+                                'values': ['256k', '512k', '1M', '2M', '4M', '8M', '12M', '20M', '30M', '40M'],
+                                'current': '8M',
+                                'doc': 'Constant bitrate low delay high quality',
+                                'fixed': False,
+                                },
+                            ],
+                        },
+                        {
+                            'name': 'Constant bitrate HQ',
+                            'ffoption': '-rc cbr_hq',
+                            'suboptions': [
+                                {
+                                'name': 'Bitrate', 
+                                'ffoption': '-v:b',
+                                'values': ['256k', '512k', '1M', '2M', '4M', '8M', '12M', '20M', '30M', '40M'],
+                                'current': '8M',
+                                'doc': 'Constant bitrate high quality mode',
+                                'fixed': False,
+                                },
+                            ],
+                        },
+                        {
+                            'name': 'Variable bitrate HQ',
+                            'ffoption': '-rc vbr_hq',
+                            'suboptions': [
+                                {
+                                'name':'Quality',
+                                'ffoption': '-cq',
+                                'values': ['0', '5', '10', '20', '25', '30', '40', '51'],
+                                'current': '0',
+                                'doc': 'Variable bitrate high quality',
+                                'fixed': False,
+                                },
+                            ],
+                        },
+                    ],
+                    'current': 'Auto by preset',
+                    'doc': 'Overrides the preset rate-control',
+                    'fixed': True,
+                },
+                'Encoder tune': True,
+                'Tune': {
+                    'ffoption': '-tune',
+                    'values': ['hq', 'll', 'ull', 'lossless'],
+                    'current': 'hq',
+                    'doc': 'Sets the encoding tuning info',
+                    'fixed': True,
+                },
+                'Lookahead': {
+                    'ffoption': '-rc-lookahead',
+                    'values': ['-1', '5', '10', '25', '30', '50', '100'],
+                    'current': '25',
+                    'doc': 'Number of frames to look ahead for rate-control',
+                    'fixed': False,
+                },
+            }
+        },
+        {   #6
+            'name':            'aac',
+            'type':            MediaType.AUDIO,
+            'system':          False,
+            'general':         ['dr1', 'delay', 'small'],
+            'threading':       ['none'],
+            'formats':         ['aac', 'mp4'],
+            'sample_rates':    [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350],
+            'channel_layouts': [],
+            'sample_formats':  ['fltp'],
+            'options':         {
+                'Encoder options': True,
+                'Coder': {
+                    'ffoption': '-aac_coder', 
+                    'values': ['anmr', 'twoloop', 'fast'],
+                    'current': 'twoloop',
+                    'doc': 'Coding algorithm: ANMR, Two loop searching, Default fast search.',
+                    'fixed': True,
+                },
+                'Force M/S stereo coding': {
+                    'ffoption': '-aac_ms', 
+                    'values': ['auto', 'true', 'false'],
+                    'current': 'auto',
+                    'doc': 'Force M/S stereo coding',
+                    'fixed': True,                
+                },
+                'Intensity stereo coding': {
+                    'ffoption': '-aac_is', 
+                    'values': ['true', 'false'],
+                    'current': 'true',
+                    'doc': 'Intensity stereo coding',
+                    'fixed': True,                
+                },
+                'Perceptual noise substitution': {
+                    'ffoption': '-aac_pns', 
+                    'values': ['true', 'false'],
+                    'current': 'true',
+                    'doc': 'Perceptual noise substitution',
+                    'fixed': True,                
+                },
+                'Temporal noise shaping': {
+                    'ffoption': '-aac_tns', 
+                    'values': ['true', 'false'],
+                    'current': 'true',
+                    'doc': 'Temporal noise shaping',
+                    'fixed': True,                
+                },
+                'Long term prediction': {
+                    'ffoption': '-aac_ltp', 
+                    'values': ['true', 'false'],
+                    'current': 'false',
+                    'doc': 'Long term prediction',
+                    'fixed': True,                
+                },
+                'AAC-Main prediction': {
+                    'ffoption': '-aac_pred', 
+                    'values': ['true', 'false'],
+                    'current': 'false',
+                    'doc': 'AAC-Main prediction',
+                    'fixed': True,                
+                },
+                'Use PCEs': {
+                    'ffoption': '-aac_pce', 
+                    'values': ['true', 'false'],
+                    'current': 'false',
+                    'doc': 'Forces the use of PCEs',
+                    'fixed': True,                
+                },
+            }
+        },
+        {   #7
+            'name':            'ac3',
+            'type':            MediaType.AUDIO,
+            'system':          False,
+            'general':         ['dr1'],
+            'threading':       ['none'],
+            'formats':         ['aac', 'mp4'],
+            'sample_rates':    [48000, 44100, 32000],
+            'channel_layouts': ['mono', 'stereo', '3.0(back)', '3.0 quad(side)', 'quad 4.0', '5.0(side)', '5.0 2channels (FC+LFE)', ' 2.1 4 channels (FL+FR+LFE+BC)', '3.1', '4.1', '5.1(side)', '5.1'],
+            'sample_formats':  ['fltp'],
+            'options':         {
+                'Encoder options': True,
+                'Center Mix Level': {
+                    'ffoption': '-center_mixlev', 
+                    'values': ['0', '0.594604', '1'],
+                    'current': '0.594604',
+                    'doc': 'Center Mix Level',
+                    'fixed': False,
+                },
+                'Surround Mix Level': {
+                    'ffoption': '-surround_mixlev', 
+                    'values': ['0', '0.5', '1'],
+                    'current': '0.5',
+                    'doc': 'Surround Mix Level',
+                    'fixed': False,
+                },
+                'Mixing Level': {
+                    'ffoption': '-mixing_level', 
+                    'values': ['-1', '10', '20', '30', '50', '80', '111'],
+                    'current': '-1',
+                    'doc': 'Mixing Level',
+                    'fixed': False,
+                },
+                'Copyright Bit': {
+                    'ffoption': '-copyright', 
+                    'values': ['-1', '0', '1'],
+                    'current': '-1',
+                    'doc': 'Copyright Bit',
+                    'fixed': True,
+                },
+            }   
+        },
+        {   #8
+            'name':            'pcm_s16le',
+            'type':            MediaType.AUDIO,
+            'system':          False,
+            'general':         ['dr1', 'variable'],
+            'threading':       ['none'],
+            'formats':         ['wav', 'mov'],
+            'sample_rates':    [],
+            'channel_layouts': [],
+            'sample_formats':  ['s16'],
+            'options':         {
+                'Encoder options': False,
+            }
+        },
+    ]
+
+    for encoder in set_encoders:
+        Encoders.Add(**encoder)
+
+    set_audio_presets = [
         {
-            'Coder': {
-                'ffoption': '-aac_coder', 
-                'values': ['anmr', 'twoloop', 'fast'],
-                'current': 'twoloop',
-                'doc': 'Coding algorithm: ANMR, Two loop searching, Default fast search.',
-                'fixed': True,
-            },
-            'Force M/S stereo coding': {
-                'ffoption': '-aac_ms', 
-                'values': ['auto', 'true', 'false'],
-                'current': 'auto',
-                'doc': 'Force M/S stereo coding',
-                'fixed': True,                
-            },
-            'Intensity stereo coding': {
-                'ffoption': '-aac_is', 
-                'values': ['true', 'false'],
-                'current': 'true',
-                'doc': 'Intensity stereo coding',
-                'fixed': True,                
-            },
-            'Perceptual noise substitution': {
-                'ffoption': '-aac_pns', 
-                'values': ['true', 'false'],
-                'current': 'true',
-                'doc': 'Perceptual noise substitution',
-                'fixed': True,                
-            },
-            'Temporal noise shaping': {
-                'ffoption': '-aac_tns', 
-                'values': ['true', 'false'],
-                'current': 'true',
-                'doc': 'Temporal noise shaping',
-                'fixed': True,                
-            },
-            'Long term prediction': {
-                'ffoption': '-aac_ltp', 
-                'values': ['true', 'false'],
-                'current': 'false',
-                'doc': 'Long term prediction',
-                'fixed': True,                
-            },
-            'AAC-Main prediction': {
-                'ffoption': '-aac_pred', 
-                'values': ['true', 'false'],
-                'current': 'false',
-                'doc': 'AAC-Main prediction',
-                'fixed': True,                
-            },
-            'Use PCEs': {
-                'ffoption': '-aac_pce', 
-                'values': ['true', 'false'],
-                'current': 'false',
-                'doc': 'Forces the use of PCEs',
-                'fixed': True,                
-            },
-        }
-
-    )
-
-    # 7: ac3 default
-    Encoders.Add(
-        name=           'ac3',
-        type=           MediaType.AUDIO,
-        system=         False,
-        general=        ['dr1'],
-        threading=      ['none'],
-        formats=        ['ac3', 'mp4'],
-        sample_rates=   [48000, 44100, 32000],
-        channel_layouts=['mono', 'stereo', '3.0(back)', '3.0 quad(side)', 'quad 4.0', '5.0(side)', '5.0 2channels (FC+LFE)', ' 2.1 4 channels (FL+FR+LFE+BC)', '3.1', '4.1', '5.1(side)', '5.1'],
-        sample_formats= ['fltp'],
-        options=
+            'name':            'No audio',
+            'encoder':         Encoders.ByName('No audio'), 
+            'default_format':  '',
+            'system':          True,
+        },
         {
-            'Center Mix Level': {
-                'ffoption': '-center_mixlev', 
-                'values': ['0', '0.594604', '1'],
-                'current': '0.594604',
-                'doc': 'Center Mix Level',
-                'fixed': False,
-            },
-            'Surround Mix Level': {
-                'ffoption': '-surround_mixlev', 
-                'values': ['0', '0.5', '1'],
-                'current': '0.5',
-                'doc': 'Surround Mix Level',
-                'fixed': False,
-            },
-            'Mixing Level': {
-                'ffoption': '-mixing_level', 
-                'values': ['-1', '10', '20', '30', '50', '80', '111'],
-                'current': '-1',
-                'doc': 'Mixing Level',
-                'fixed': False,
-            },
-            'Copyright Bit': {
-                'ffoption': '-copyright', 
-                'values': ['-1', '0', '1'],
-                'current': '-1',
-                'doc': 'Copyright Bit',
-                'fixed': True,
-            },
-        }
-    )
+            'name':            'Stream copy',
+            'encoder':         Encoders.ByName('Audio stream copy'), 
+            'default_format':  '',
+            'system':          True,
+        },
+        {
+            'name':            'aac',
+            'encoder':         Encoders.ByName('aac'),
+            'default_format':  'aac',
+            'system':          False,
+        },
+        {
+            'name':            'ac3',
+            'encoder':         Encoders.ByName('ac3'),
+            'default_format':  'ac3',
+            'system':          False,
+        },
+        {
+            'name':            'pcm 16 bit',
+            'encoder':         Encoders.ByName('pcm_s16le'),
+            'default_format':  'wav',
+            'system':          False,
+        },
+    ]
 
-    # 8: pcm_s16le default
-    Encoders.Add(
-        name=           'pcm_s16le',
-        type=           MediaType.AUDIO,
-        system=         False,
-        general=        ['dr1', 'variable'],
-        threading=      ['none'],
-        formats=        ['wav', 'mov'],
-        sample_rates=   [],
-        channel_layouts=[],
-        sample_formats= ['s16'],
-        options=        {}
-    )
+    for ap in set_audio_presets:
+        AudioPresets.Add(**ap)
 
-    # Add presets
-    AudioPresets.Add('No audio', Encoders.GetEncoderByIndex(2), '', system=True, editable=False)
-    AudioPresets.Add('Stream copy', Encoders.GetEncoderByIndex(3), '', system=True, editable=False)
-    AudioPresets.Add('aac', Encoders.GetEncoderByIndex(6), 'aac', system=False, editable=True)
-    AudioPresets.Add('ac3', Encoders.GetEncoderByIndex(7), 'ac3', system=False, editable=True)
-    AudioPresets.Add('pcm 16 bit', Encoders.GetEncoderByIndex(8), 'wav', system=False, editable=True)
+    set_video_presets = [
+        {
+            'name': 'No video',
+            'encoder': Encoders.ByName('No video'),
+            'default_format': '',
+            'system': True,
+        },
+        {
+            'name': 'Stream copy',
+            'encoder': Encoders.ByName('Video stream copy'),
+            'default_format': '',
+            'system': True,
+        },
+        {
+            'name': 'libx h264 420p cbr 8M slow',
+            'encoder': Encoders.ByName('libx264'),
+            'default_format': 'mp4',
+            'system': False,
+        },
+        {
+            'name': 'nv h264 420p Preset p6-Better',
+            'encoder': Encoders.ByName('h264_nvenc'),
+            'default_format': 'mp4',
+            'system': False,
+        },
+    ]
 
-    VideoPresets.Add('No video', Encoders.GetEncoderByIndex(0), '', system=True, editable=False)
-    VideoPresets.Add('Stream copy', Encoders.GetEncoderByIndex(1), '', system=True, editable=False)
-    VideoPresets.Add('libx h264 420p cbr 8M slow', Encoders.GetEncoderByIndex(4), 'mp4', system=False, editable=True)
-    VideoPresets.Add('nv h264 420p Preset p6-Better', Encoders.GetEncoderByIndex(5), 'mp4', system=False, editable=True)
+    for vp in set_video_presets:
+        VideoPresets.Add(**vp)
 
     app.MainLoop()
+
+    # encoder options contain entire set (default settings)
+    # but preset options contain the subset of changed options
